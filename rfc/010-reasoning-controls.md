@@ -52,13 +52,14 @@ Add CLI flags:
 Behavior:
 - flags can be used in both `--task` mode and interactive mode bootstrapping
 - when omitted, the session starts with `default`
-- `off` is normalized to `none` for storage and display
+- `off` is normalized to `none` for storage; UX may display `off`
 - invalid values are rejected by argparse choice validation
 
 ### 3) Interactive contract
 
 Add slash commands:
-- `/reasoning <level>`
+- `/reasoning` (open a menu)
+- `/reasoning <level>` (set directly)
 
 Where:
 - `<level>` for `/reasoning`: `default|none|minimal|low|medium|high|xhigh` (plus `off` as an alias for `none`)
@@ -73,7 +74,7 @@ Note:
 - run-scoped `reasoning_effort` persists across model switches in the same session; it applies to subsequent primary task calls regardless of the active model until changed (e.g. `/reasoning default`).
 
 Compatibility:
-- Accept `/reasoning off` as an alias for `reasoning_effort=none` (UI-friendly), but persist/print the canonical value as `none`.
+- Accept `/reasoning off` as an alias for `reasoning_effort=none` (UI-friendly). Persist the canonical value (`none`), but UX may display `off`.
 
 ### 4) Effective request merge rule
 
