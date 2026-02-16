@@ -59,10 +59,9 @@ Behavior:
 
 Add slash commands:
 - `/reasoning` (open a menu)
-- `/reasoning <level>` (set directly)
 
 Where:
-- `<level>` for `/reasoning`: `default|none|minimal|low|medium|high|xhigh` (plus `off` as an alias for `none`)
+- Menu options: `default|off|minimal|low|medium|high|xhigh`
 
 Semantics:
 - updates apply immediately to subsequent primary task turns in the same session
@@ -74,7 +73,7 @@ Note:
 - run-scoped `reasoning_effort` persists across model switches in the same session; it applies to subsequent primary task calls regardless of the active model until changed (e.g. `/reasoning default`).
 
 Compatibility:
-- Accept `/reasoning off` as an alias for `reasoning_effort=none` (UI-friendly). Persist the canonical value (`none`), but UX may display `off`.
+- `off` is the UI label for `reasoning_effort=none` (canonical). Persist the canonical value (`none`), but UX may display `off`.
 
 ### 4) Effective request merge rule
 
@@ -132,7 +131,7 @@ Important:
 
 Operational notes:
 - If you want to reliably *see* an error when a model/provider does not support `reasoning_effort` as a parameter name, run with `drop_params=False` (strict mode). With `drop_params=True`, LiteLLM may drop the parameter name and the request can still succeed, which can look like "the setting was ignored".
-- When the active model changes mid-session, `reasoning_effort` can become unsupported for the new model. In strict mode this can raise; in drop mode this can be silently removed. Either way, users can reset to provider defaults via `/reasoning default`.
+- When the active model changes mid-session, `reasoning_effort` can become unsupported for the new model. In strict mode this can raise; in drop mode this can be silently removed. Either way, users can reset to provider defaults by picking `default` in the `/reasoning` menu.
 - UX recommendation (interactive): when the active model changes, and `drop_params=True` and `litellm.get_supported_openai_params()` does not include `reasoning_effort`, display a one-line warning that the setting may be ignored/dropped for the current model.
 
 ## Proposed Code Changes

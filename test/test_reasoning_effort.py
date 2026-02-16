@@ -140,12 +140,7 @@ async def test_interactive_reasoning_command_sets_agent(monkeypatch):
     assert handled is True
     assert successes and "reasoning_effort set" in successes[-1]
 
-    # Set value
+    # Args are rejected to keep UX consistent.
     handled = await session._handle_command("/reasoning off")
     assert handled is True
-    assert successes and "reasoning_effort set" in successes[-1]
-
-    # Invalid value
-    handled = await session._handle_command("/reasoning bogus")
-    assert handled is True
-    assert errors and errors[-1][0] == "Invalid reasoning_effort"
+    assert errors and errors[-1][0] == "Error"

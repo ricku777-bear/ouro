@@ -71,8 +71,7 @@ class InteractiveSession:
                 CommandSpec("verbose", "Toggle verbose thinking display"),
                 CommandSpec(
                     "reasoning",
-                    "Set run-scoped reasoning effort (LiteLLM) (opens menu if no args)",
-                    args_hint="[level]",
+                    "Set run-scoped reasoning effort (LiteLLM) (menu)",
                 ),
                 CommandSpec("compact", "Compress conversation memory"),
                 CommandSpec("skills", "Manage skills (list/install/uninstall)"),
@@ -376,28 +375,20 @@ class InteractiveSession:
         elif command == "/reasoning":
             # Usage:
             # - /reasoning               -> open menu
-            # - /reasoning <level>       -> set directly
-            level = command_parts[1] if len(command_parts) >= 2 else None
-            if len(command_parts) > 2:
-                terminal_ui.print_error("Usage: /reasoning [level]")
-                terminal_ui.print_info(
-                    "Allowed: default, off, minimal, low, medium, high, xhigh (also accepts: none)"
-                )
+            if len(command_parts) != 1:
+                terminal_ui.print_error("Usage: /reasoning")
+                terminal_ui.print_info("Use the menu to select a level.")
                 return True
 
-            if level is None:
-                picked = await pick_reasoning_effort(current=self.agent.get_reasoning_effort())
-                if picked is None:
-                    return True
-                level = picked
+            picked = await pick_reasoning_effort(current=self.agent.get_reasoning_effort())
+            if picked is None:
+                return True
+            level = picked
 
             try:
                 self.agent.set_reasoning_effort(level)
             except ValueError as e:
                 terminal_ui.print_error(str(e), title="Invalid reasoning_effort")
-                terminal_ui.print_info(
-                    "Allowed: default, off, minimal, low, medium, high, xhigh (also accepts: none)"
-                )
                 return True
 
             terminal_ui.print_success(

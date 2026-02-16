@@ -70,7 +70,6 @@ Type your request and press Enter twice to submit. The agent will think, use too
 /theme                   Toggle dark/light theme
 /verbose                 Toggle thinking display
 /reasoning               Open reasoning menu
-/reasoning high          Set reasoning effort for subsequent turns
 /compact                 Compress conversation memory
 /reset                   Clear conversation and start fresh
 /resume                  List recent sessions
