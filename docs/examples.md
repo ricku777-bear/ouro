@@ -44,8 +44,8 @@ ouro --login
 # Logout (select provider from menu)
 ouro --logout
 
-# If browser does not open automatically, use this URL manually:
-# https://auth.openai.com/codex/device
+# If browser does not open automatically, ouro will print a URL you can open manually.
+# If port 1455 is already in use, set OURO_CHATGPT_OAUTH_CALLBACK_PORT=0 to auto-pick an available port.
 ```
 
 ## Interactive Mode
