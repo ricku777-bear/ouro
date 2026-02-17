@@ -45,7 +45,8 @@ ouro --login
 ouro --logout
 
 # If browser does not open automatically, ouro will print a URL you can open manually.
-# If port 1455 is already in use, set OURO_CHATGPT_OAUTH_CALLBACK_PORT=0 to auto-pick an available port.
+# To force the legacy device-code flow:
+# OURO_CHATGPT_LOGIN_METHOD=device ouro --login
 ```
 
 ## Interactive Mode
