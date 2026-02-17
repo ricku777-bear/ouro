@@ -73,10 +73,10 @@ Example model config:
 
 ```yaml
 models:
-  chatgpt/gpt-5.3-codex:
+  chatgpt/gpt-5.2-codex:
     timeout: 600
 
-default: chatgpt/gpt-5.3-codex
+default: chatgpt/gpt-5.2-codex
 ```
 
 ## Alternatives Considered
