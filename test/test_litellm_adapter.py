@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from config import Config
 from llm.chatgpt_auth import ChatGPTLoginRequiredError
 from llm.content_utils import extract_text
 from llm.litellm_adapter import LiteLLMAdapter
@@ -298,3 +299,53 @@ async def test_chatgpt_adapter_preserves_non_login_auth_errors(tmp_path, monkeyp
 
     with pytest.raises(RuntimeError, match="refresh endpoint timeout"):
         await adapter.call_async([LLMMessage(role="user", content="hi")])
+
+
+async def test_chatgpt_adapter_retries_transient_auth_refresh_errors(tmp_path, monkeypatch):
+    auth_dir = tmp_path / "chatgpt-auth"
+    auth_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CHATGPT_TOKEN_DIR", str(auth_dir))
+    monkeypatch.setattr(Config, "get_retry_delay", lambda attempt: 0.0)
+
+    calls = {"count": 0}
+
+    async def fake_ensure_chatgpt_access_token(*, interactive: bool) -> str:
+        assert interactive is False
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("timeout")
+        return "at_123"
+
+    monkeypatch.setattr(
+        "llm.chatgpt_auth.ensure_chatgpt_access_token", fake_ensure_chatgpt_access_token
+    )
+
+    response = MagicMock()
+    choice = MagicMock()
+    message = MagicMock()
+    message.content = "ok"
+    message.tool_calls = None
+    message.thinking_blocks = None
+    message.reasoning_content = None
+    choice.message = message
+    choice.finish_reason = "stop"
+    response.choices = [choice]
+    response.usage = {"prompt_tokens": 1, "completion_tokens": 1}
+
+    async def fake_acompletion(**_kwargs):
+        return response
+
+    fake_litellm = SimpleNamespace(
+        acompletion=fake_acompletion,
+        drop_params=None,
+        set_verbose=None,
+        suppress_debug_info=None,
+    )
+
+    adapter = LiteLLMAdapter(model="chatgpt/gpt-5.2")
+    monkeypatch.setattr(adapter, "_get_litellm", lambda: fake_litellm)
+
+    result = await adapter.call_async([LLMMessage(role="user", content="hi")])
+
+    assert calls["count"] >= 2
+    assert result.content == "ok"
