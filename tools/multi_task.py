@@ -3,8 +3,8 @@
 import asyncio
 import os
 import shutil
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Set
 
@@ -379,9 +379,7 @@ Execute the task now:"""
         template_conformant = all([summary, key_findings, errors])
         fetch_hint = "NONE" if template_conformant else "REQUIRED"
         non_conformant_context = (
-            ""
-            if template_conformant
-            else self._build_non_conformant_context(output)
+            "" if template_conformant else self._build_non_conformant_context(output)
         )
         artifact_path = self._write_task_artifact(
             artifact_root=artifact_root,
@@ -560,17 +558,17 @@ Execute the task now:"""
             result = results.get(idx)
             status = result.status if result else "not_executed"
             fetch_hint = result.fetch_hint if result else "NONE"
-            template_conformant = (
-                "true" if result and result.template_conformant else "false"
-            )
+            template_conformant = "true" if result and result.template_conformant else "false"
             task_label = self._sanitize_mermaid_label(task)[:80]
             lines.append(
                 f'    T{idx}["#{idx} {task_label}<br/>status={status}<br/>fetch={fetch_hint}<br/>conformant={template_conformant}"]'
             )
 
         for task_idx in sorted(dependencies.keys(), key=int):
-            for dep_idx in sorted(dependencies[task_idx], key=int):
-                lines.append(f"    T{int(dep_idx)} --> T{int(task_idx)}")
+            lines.extend(
+                f"    T{int(dep_idx)} --> T{int(task_idx)}"
+                for dep_idx in sorted(dependencies[task_idx], key=int)
+            )
 
         try:
             dag_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -667,9 +665,7 @@ Execute the task now:"""
                         + ("true" if result.template_conformant else "false")
                     )
                     sections.append(f"FETCH_HINT: {result.fetch_hint}")
-                    sections.append(
-                        f"ARTIFACT_PATH: {result.artifact_path or 'UNAVAILABLE'}"
-                    )
+                    sections.append(f"ARTIFACT_PATH: {result.artifact_path or 'UNAVAILABLE'}")
 
                 output = "\n".join(sections)
                 if len(output) > self.MAX_RESULT_CHARS:
