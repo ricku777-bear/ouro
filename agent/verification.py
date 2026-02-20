@@ -118,7 +118,7 @@ class LLMVerifier:
 
         console = self._tui.console if self._tui else None
         if console:
-            async with AsyncSpinner(console, "Verifying completion..."):
+            async with AsyncSpinner(console, "Verifying completion...", title="Verifying"):
                 response = await self.llm.call_async(messages=messages, tools=None, max_tokens=512)
         else:
             response = await self.llm.call_async(messages=messages, tools=None, max_tokens=512)

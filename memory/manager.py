@@ -332,7 +332,7 @@ class MemoryManager:
                 todo_context = self._todo_context_provider()
 
             # Perform compression with TUI spinner
-            async with AsyncSpinner(terminal_ui.console, "Compressing memory..."):
+            async with AsyncSpinner(terminal_ui.console, "Compressing memory...", title="Working"):
                 compressed = await self.compressor.compress(
                     messages,
                     strategy=strategy,

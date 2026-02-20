@@ -22,7 +22,6 @@ class StatusBarState:
     context_tokens: int = 0
     cost: float = 0.0
     is_processing: bool = False
-    status_message: str = ""
     model_name: str = ""
 
 
@@ -117,7 +116,6 @@ class StatusBar:
         context_tokens: Optional[int] = None,
         cost: Optional[float] = None,
         is_processing: Optional[bool] = None,
-        status_message: Optional[str] = None,
         model_name: Optional[str] = None,
     ) -> None:
         """Update status bar state.
@@ -129,7 +127,6 @@ class StatusBar:
             context_tokens: Current context window tokens
             cost: Current cost
             is_processing: Whether currently processing
-            status_message: Optional status message
             model_name: Current model name
         """
         if mode is not None:
@@ -144,8 +141,6 @@ class StatusBar:
             self.state.cost = cost
         if is_processing is not None:
             self.state.is_processing = is_processing
-        if status_message is not None:
-            self.state.status_message = status_message
         if model_name is not None:
             self.state.model_name = model_name
 
