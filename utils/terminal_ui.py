@@ -184,17 +184,6 @@ def print_tool_result(
     if truncated:
         console.print(f"[{colors.warning}]Result truncated[/{colors.warning}]")
 
-    # Show status line
-    status_icon = "✓" if success else "✗"
-    status_color = colors.success if success else colors.error
-    status_parts = [f"[{status_color}]{status_icon}[/{status_color}]"]
-
-    if duration:
-        status_parts.append(f"({duration:.1f}s)")
-
-    if status_parts:
-        console.print(" ".join(status_parts))
-
 
 def print_final_answer(answer: str) -> None:
     """Print final answer in a formatted panel with Markdown rendering.
