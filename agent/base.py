@@ -190,7 +190,7 @@ class BaseAgent(ABC):
                     spinner_message="Compressing memory...",
                 )
                 summary = self._extract_text(response)
-                await self.memory.apply_compression(summary, usage=response.usage)
+                self.memory.apply_compression(summary, usage=response.usage)
 
                 logger.debug(
                     f"Memory compressed (cache-safe): "

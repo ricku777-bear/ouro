@@ -719,7 +719,7 @@ class TestDeferredCompression:
         # Simulate the react loop: apply a summary
         summary = "User and assistant exchanged greetings."
         usage = {"input_tokens": 200, "output_tokens": 30}
-        await manager.apply_compression(summary, usage=usage)
+        manager.apply_compression(summary, usage=usage)
 
         # Should have compressed
         assert manager.compression_count == 1
@@ -749,7 +749,7 @@ class TestDeferredCompression:
         for msg in simple_messages:
             await manager.add_message(msg)
 
-        await manager.apply_compression("Summary of conversation.")
+        manager.apply_compression("Summary of conversation.")
 
         context = manager.get_context_for_llm()
         summary_msg = next(
@@ -781,7 +781,7 @@ class TestDeferredCompression:
         original_count = manager.short_term.count()
         assert original_count == len(tool_use_messages)
 
-        await manager.apply_compression("User asked for a calculation.")
+        manager.apply_compression("User asked for a calculation.")
 
         # Should have compressed
         assert manager.compression_count == 1

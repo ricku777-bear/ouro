@@ -74,7 +74,6 @@ class MemoryManager:
 
         # Deferred compression: set by add_message(), consumed by _react_loop()
         self._compression_needed = False
-        self._compression_reason: Optional[str] = None
 
         # Tool schema token overhead (counted once per session)
         self._tool_schema_tokens: int = 0
@@ -236,7 +235,6 @@ class MemoryManager:
         should_compress, reason = self._should_compress()
         if should_compress:
             self._compression_needed = True
-            self._compression_reason = reason
             logger.info(f"🗜️  Compression needed: {reason} (deferred to react loop)")
         else:
             # Log compression check details
@@ -358,40 +356,41 @@ class MemoryManager:
             return [summary_message] + non_system_preserved
         return [summary_message]
 
-    async def apply_compression(
-        self, summary_text: str, usage: Optional[Dict[str, int]] = None
-    ) -> None:
+    def apply_compression(self, summary_text: str, usage: Optional[Dict[str, int]] = None) -> None:
         """Apply the LLM's summary to compress memory.
 
         This is the counterpart to get_compaction_prompt() — called after
-        the LLM produces the summary.
+        the LLM produces the summary in the react loop.
 
         Args:
             summary_text: The LLM-generated summary text
             usage: Optional token usage from the compression LLM call
         """
         messages = self.short_term.get_messages()
-        message_count = len(messages)
+        if not messages:
+            self._compression_needed = False
+            return
+
         strategy = self._select_strategy(messages)
         todo_context = self._todo_context_provider() if self._todo_context_provider else None
 
         logger.info(
-            f"🗜️  Applying compression to {message_count} messages using {strategy} strategy"
+            f"🗜️  Applying compression to {len(messages)} messages using {strategy} strategy"
         )
+
+        # Inject todo context into summary
+        if todo_context and "[Current Tasks]" not in summary_text:
+            summary_text = f"{summary_text}\n\n[Current Tasks]\n{todo_context}"
 
         # Build summary message
-        compressed = self.compressor.apply_summary(messages, summary_text, todo_context)
-
-        if not compressed.messages:
-            self._compression_needed = False
-            self._compression_reason = None
-            return
-
-        # Assemble final message list based on strategy
-        result_messages = self._assemble_compressed_messages(
-            messages, compressed.messages[0], strategy
+        summary_message = LLMMessage(
+            role="user",
+            content=f"{self.compressor.SUMMARY_PREFIX}{summary_text}",
         )
-        original_tokens = compressed.original_tokens
+
+        # Assemble final message list and calculate metrics
+        original_tokens = self.compressor._estimate_tokens(messages)
+        result_messages = self._assemble_compressed_messages(messages, summary_message, strategy)
         compressed_tokens = self.compressor._estimate_tokens(result_messages)
         token_savings = original_tokens - compressed_tokens
 
@@ -415,7 +414,6 @@ class MemoryManager:
         old_tokens = self.current_tokens
         self.current_tokens = self._recalculate_current_tokens()
         self._compression_needed = False
-        self._compression_reason = None
 
         compression_ratio = compressed_tokens / original_tokens if original_tokens > 0 else 0
         savings_pct = (token_savings / original_tokens * 100) if original_tokens > 0 else 0
@@ -475,19 +473,9 @@ class MemoryManager:
             self.token_tracker.add_compression_savings(compressed.token_savings)
             self.token_tracker.add_compression_cost(compressed.compressed_tokens)
 
-            # Remove compressed messages from short-term memory
-            self.short_term.remove_first(message_count)
-
-            # Get any remaining messages (added after compression started)
-            remaining_messages = self.short_term.get_messages()
+            # Replace short-term memory with compressed messages
             self.short_term.clear()
-
-            # Add compressed messages (summary + preserved, already combined by compressor)
             for msg in compressed.messages:
-                self.short_term.add_message(msg)
-
-            # Add any remaining messages
-            for msg in remaining_messages:
                 self.short_term.add_message(msg)
 
             # Update current token count
@@ -496,7 +484,6 @@ class MemoryManager:
 
             # Clear the deferred compression flag
             self._compression_needed = False
-            self._compression_reason = None
 
             # Log compression results
             logger.info(
@@ -682,7 +669,6 @@ class MemoryManager:
         self.last_compression_savings = 0
         self.compression_count = 0
         self._compression_needed = False
-        self._compression_reason = None
 
     def rollback_incomplete_exchange(self) -> None:
         """Rollback the last incomplete assistant response with tool_calls.

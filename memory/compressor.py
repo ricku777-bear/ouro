@@ -144,53 +144,6 @@ Original messages ({count} messages, ~{tokens} tokens):
 
         return prompt
 
-    def apply_summary(
-        self,
-        messages: List[LLMMessage],
-        summary_text: str,
-        todo_context: Optional[str] = None,
-    ) -> CompressedMemory:
-        """Build a summary message from an LLM-generated summary.
-
-        This is the counterpart to build_compaction_prompt(): after the LLM
-        produces a summary, this method wraps it into a summary message.
-        Strategy-specific message list assembly (e.g. preserving recent
-        messages for selective strategy) is handled by the caller
-        (MemoryManager.apply_compression).
-
-        Args:
-            messages: Original messages that were compressed (for token counting)
-            summary_text: The LLM's summary text
-            todo_context: Optional current todo list state to inject
-
-        Returns:
-            CompressedMemory with a single summary message and original token count
-        """
-        if not messages:
-            return CompressedMemory(messages=[])
-
-        original_tokens = self._estimate_tokens(messages)
-
-        # Append todo context if available and not already in the summary
-        if todo_context and "[Current Tasks]" not in summary_text:
-            summary_text = f"{summary_text}\n\n[Current Tasks]\n{todo_context}"
-
-        # Build summary message
-        summary_message = LLMMessage(
-            role="user",
-            content=f"{self.SUMMARY_PREFIX}{summary_text}",
-        )
-
-        compressed_tokens = self._estimate_tokens([summary_message])
-
-        return CompressedMemory(
-            messages=[summary_message],
-            original_message_count=len(messages),
-            compressed_tokens=compressed_tokens,
-            original_tokens=original_tokens,
-            compression_ratio=compressed_tokens / original_tokens if original_tokens > 0 else 0,
-        )
-
     async def _compress_sliding_window(
         self,
         messages: List[LLMMessage],
