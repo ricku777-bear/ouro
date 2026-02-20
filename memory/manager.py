@@ -406,13 +406,9 @@ class MemoryManager:
         self.token_tracker.add_compression_savings(token_savings)
         self.token_tracker.add_compression_cost(compressed_tokens)
 
-        # Replace short-term memory: remove originals, add compressed + any late arrivals
-        self.short_term.remove_first(message_count)
-        remaining_messages = self.short_term.get_messages()
+        # Replace short-term memory with compressed messages
         self.short_term.clear()
         for msg in result_messages:
-            self.short_term.add_message(msg)
-        for msg in remaining_messages:
             self.short_term.add_message(msg)
 
         # Update state
