@@ -6,6 +6,7 @@ from typing import Optional
 from config import Config
 from llm import LLMMessage
 from utils import terminal_ui
+from utils.tui.progress import AsyncSpinner
 
 from .base import BaseAgent
 from .context import format_context_prompt
@@ -90,7 +91,10 @@ AGENTS.md is optional. If not found, proceed normally.
             # Inject long-term memory instructions + current memories
             if self.memory.long_term:
                 try:
-                    ltm_section = await self.memory.long_term.load_and_format()
+                    async with AsyncSpinner(
+                        terminal_ui.console, "Loading memory...", title="Working"
+                    ):
+                        ltm_section = await self.memory.long_term.load_and_format()
                     if ltm_section:
                         system_content = system_content + "\n" + ltm_section
                 except Exception:

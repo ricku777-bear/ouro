@@ -171,15 +171,19 @@ class BaseAgent(ABC):
         Returns:
             Final answer as a string
         """
+        iteration = 0
         while True:
+            iteration += 1
+
             # Get context (either from memory or local messages)
             context = self.memory.get_context_for_llm() if use_memory else messages
 
             # Call LLM with tools
+            spinner_msg = "Analyzing request..." if iteration == 1 else "Processing results..."
             response = await self._call_llm(
                 messages=context,
                 tools=tools,
-                spinner_message="Analyzing request...",
+                spinner_message=spinner_msg,
             )
 
             # Save assistant response using response.to_message() for proper format
@@ -256,7 +260,9 @@ class BaseAgent(ABC):
         for tc in tool_calls:
             terminal_ui.print_tool_call(tc.name, tc.arguments)
 
-            async with AsyncSpinner(terminal_ui.console, f"Executing {tc.name}..."):
+            async with AsyncSpinner(
+                terminal_ui.console, f"Executing {tc.name}...", title="Working"
+            ):
                 result = await self.tool_executor.execute_tool_call(tc.name, tc.arguments)
 
             terminal_ui.print_tool_result(result)
@@ -281,6 +287,7 @@ class BaseAgent(ABC):
             AsyncSpinner(
                 terminal_ui.console,
                 f"Executing {len(tool_calls)} tools in parallel ({tool_names})...",
+                title="Working",
             ),
             asyncio.TaskGroup() as tg,
         ):

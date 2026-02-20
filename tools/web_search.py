@@ -4,8 +4,15 @@ import asyncio
 from typing import Any, Dict, List
 
 from ddgs import DDGS
+from ddgs.http_client import HttpClient
 
 from .base import BaseTool
+
+# Fix ddgs/primp compatibility: ddgs ships impersonate profiles that primp 1.0
+# no longer recognises.  Passing an unknown value triggers a Rust-side fallback
+# path that deadlocks under concurrent threads.  Override with valid values.
+HttpClient._impersonates = ("random",)  # type: ignore[misc]
+HttpClient._impersonates_os = ("macos", "linux", "windows")
 
 # Default timeout for web search operations
 DEFAULT_SEARCH_TIMEOUT = 30.0

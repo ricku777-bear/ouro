@@ -230,15 +230,18 @@ class AsyncSpinner:
         self,
         console: Console,
         message: str = "Processing...",
+        title: str = "Thinking",
     ):
         """Initialize async spinner.
 
         Args:
             console: Rich console instance
             message: Message to display
+            title: Panel title (e.g. "Thinking", "Working", "Verifying")
         """
         self.console = console
         self.message = message
+        self.title = title
         self._start_time: Optional[float] = None
         self._live: Optional[Live] = None
         self._running = False
@@ -251,7 +254,7 @@ class AsyncSpinner:
 
         return Panel(
             spinner,
-            title=f"[{colors.thinking_accent}]Thinking[/{colors.thinking_accent}]",
+            title=f"[{colors.thinking_accent}]{self.title}[/{colors.thinking_accent}]",
             title_align="left",
             border_style=colors.text_muted,
             box=box.ROUNDED,
