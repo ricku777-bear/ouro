@@ -502,6 +502,25 @@ class TaskBoardTool(BaseTool):
         # Reserve groups file path (some implementations keep this).
         _touch(root / _DIR_GROUPS)
 
+        # Optional Claude-like behavior: clear completed task tickets once everything is done.
+        # Disabled by default because Ouro generally prefers auditability.
+        cleanup = os.getenv("OURO_TASKS_AUTO_CLEANUP", "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        if (
+            cleanup
+            and self._plan.tasks
+            and all(t.status == "completed" for t in self._plan.tasks.values())
+        ):
+            for p in root.glob("*.json"):
+                if p.name.startswith("_"):
+                    continue
+                with suppress(OSError):
+                    p.unlink()
+
     def _alloc_id(self) -> str:
         max_n = -1
         for task_id in self._plan.tasks:

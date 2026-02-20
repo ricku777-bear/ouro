@@ -103,6 +103,10 @@ Directory layout:
 Each task file includes `blockedBy` plus a derived `blocks` list, mirroring the dependency metadata
 style used by Claude Code Tasks. Ouro also persists `summary/artifacts/errors` alongside those fields.
 
+Optional cleanup:
+- Set `OURO_TASKS_AUTO_CLEANUP=1` to delete per-task JSON tickets once all tasks are `completed`,
+  mimicking the "ephemeral control-plane state" behavior observed in Claude Code.
+
 ## Scheduling (Round-Based)
 
 A "round" is one fanout barrier (typically one `multi_task` call).
