@@ -81,6 +81,28 @@ Important: "hydration" is about loading orchestration state into the runtime (an
 the LLM-visible context). Persistence alone does not guarantee the model will remember state across
 sessions unless the runtime re-hydrates it.
 
+## Optional Store: Claude-Like Task List Directory
+
+Claude Code Tasks appears to back a "task list" with a directory containing one JSON file per task.
+To apply the same implementation property to Ouro, `task_board` supports an optional "dir" store:
+
+- Use `task_list_id=<id>` to store in `~/.ouro/tasks/<id>/` (cross-session / multi-process friendly).
+- Use `store="dir"` + `path=<dir>` to store in an arbitrary directory (useful for tests).
+
+Directory layout:
+
+```
+~/.ouro/tasks/<task_list_id>/
+  .lock
+  _meta.json
+  _groups.json
+  <task_id>.json
+  <task_id>.json
+```
+
+Each task file includes `blockedBy` plus a derived `blocks` list, mirroring the dependency metadata
+style used by Claude Code Tasks. Ouro also persists `summary/artifacts/errors` alongside those fields.
+
 ## Scheduling (Round-Based)
 
 A "round" is one fanout barrier (typically one `multi_task` call).

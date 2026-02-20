@@ -12,7 +12,9 @@ while the runtime only needs mechanical scheduling rules.
 from __future__ import annotations
 
 import json
+import os
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +22,11 @@ from typing import Any
 from .base import BaseTool
 
 _DEFAULT_TASKS_PATH = "tasks.md"
+_DEFAULT_STORE = "markdown"  # markdown|dir
+
+_DIR_META = "_meta.json"
+_DIR_GROUPS = "_groups.json"  # Reserved for future grouping/UI metadata
+_DIR_LOCK = ".lock"
 
 
 @dataclass
@@ -105,12 +112,21 @@ class TaskBoardTool(BaseTool):
         return {
             "operation": {
                 "type": "string",
-                "description": "create|list|get|update|runnable|hydrate|sync",
+                "description": "create|list|get|update|delete|runnable|hydrate|sync",
             },
             "path": {
                 "type": "string",
                 "description": f"Path to tasks.md (default: { _DEFAULT_TASKS_PATH })",
                 "default": _DEFAULT_TASKS_PATH,
+            },
+            "store": {
+                "type": "string",
+                "description": "Persistence backend: markdown|dir (dir uses one JSON file per task)",
+                "default": _DEFAULT_STORE,
+            },
+            "task_list_id": {
+                "type": "string",
+                "description": "Optional task list id. If set, uses ~/.ouro/tasks/<task_list_id>/ as the store root (dir backend).",
             },
             "goal": {"type": "string", "description": "Plan goal (hydrate/create)"},
             "id": {"type": "string", "description": "Task id (get/update)"},
@@ -122,7 +138,10 @@ class TaskBoardTool(BaseTool):
                 "description": "Dependency task ids",
                 "items": {"type": "string"},
             },
-            "status": {"type": "string", "description": "pending|in_progress|completed|failed"},
+            "status": {
+                "type": "string",
+                "description": "pending|in_progress|completed|failed|deleted",
+            },
             "owner": {
                 "type": "string",
                 "description": "Owner label (agent name/worktree path/etc)",
@@ -145,14 +164,34 @@ class TaskBoardTool(BaseTool):
 
     def __init__(self) -> None:
         self._plan = TaskPlan()
+        self._store: str = _DEFAULT_STORE
         self._path: str = _DEFAULT_TASKS_PATH
+        self._task_list_id: str | None = None
 
-    async def execute(self, operation: str, path: str = _DEFAULT_TASKS_PATH, **kwargs) -> str:
+    async def execute(
+        self,
+        operation: str,
+        path: str = _DEFAULT_TASKS_PATH,
+        store: str = _DEFAULT_STORE,
+        task_list_id: str | None = None,
+        **kwargs,
+    ) -> str:
         op = (operation or "").strip().lower()
         if not op:
             return "Error: operation is required"
 
-        self._path = (path or _DEFAULT_TASKS_PATH).strip() or _DEFAULT_TASKS_PATH
+        self._store, self._path, self._task_list_id = _resolve_store_path(
+            path=path,
+            store=store,
+            task_list_id=task_list_id,
+        )
+
+        # In "dir" mode we assume multiple sessions may share state. Always re-hydrate
+        # on entry to avoid stale in-memory state.
+        if self._store == "dir" and op not in {"hydrate"}:
+            hydrate_out = self._hydrate(goal="")
+            if hydrate_out.startswith("Error:"):
+                return hydrate_out
 
         if op == "hydrate":
             goal = (kwargs.get("goal") or "").strip()
@@ -214,6 +253,13 @@ class TaskBoardTool(BaseTool):
             if not t:
                 return "Error: task not found"
 
+            # Claude-style lifecycle: "deleted" means remove the task record.
+            status_in = kwargs.get("status")
+            if status_in is not None and str(status_in).strip().lower() == "deleted":
+                self._plan.tasks.pop(task_id, None)
+                self._sync_best_effort()
+                return "OK"
+
             for field_name in [
                 "status",
                 "owner",
@@ -244,6 +290,16 @@ class TaskBoardTool(BaseTool):
             self._sync_best_effort()
             return "OK"
 
+        if op == "delete":
+            task_id = (kwargs.get("id") or "").strip()
+            if not task_id:
+                return "Error: delete requires id"
+            if task_id not in self._plan.tasks:
+                return "Error: task not found"
+            self._plan.tasks.pop(task_id, None)
+            self._sync_best_effort()
+            return "OK"
+
         if op == "runnable":
             limit = _to_pos_int(kwargs.get("limit"), default=50)
             runnable = self._runnable_ids()
@@ -256,16 +312,43 @@ class TaskBoardTool(BaseTool):
     # ------------------------------------------------------------------
 
     def _hydrate(self, *, goal: str) -> str:
+        if self._store == "dir":
+            return self._hydrate_dir(goal=goal)
+        return self._hydrate_markdown(goal=goal)
+
+    def _sync(self) -> str:
+        if self._store == "dir":
+            return self._sync_dir()
+        return self._sync_markdown()
+
+    def _sync_best_effort(self) -> None:
+        # Best-effort persistence so the manager doesn't need to remember to call sync.
+        try:
+            if self._store == "dir":
+                self._sync_dir()
+            else:
+                self._sync_markdown()
+        except Exception:
+            return
+
+    # ------------------------------------------------------------------
+    # Backends
+    # ------------------------------------------------------------------
+
+    def _hydrate_markdown(self, *, goal: str) -> str:
         path = Path(self._path)
         if not path.exists():
             self._plan = TaskPlan(goal=goal or "")
             self._sync_best_effort()
             return "OK"
 
-        try:
-            data = path.read_text(encoding="utf-8")
-        except OSError:
-            return "Error: failed to read tasks file"
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        _touch(lock_path)
+        with _file_lock(lock_path):
+            try:
+                data = path.read_text(encoding="utf-8")
+            except OSError:
+                return "Error: failed to read tasks file"
 
         payload = _extract_json_block(data)
         if payload is None:
@@ -293,19 +376,131 @@ class TaskBoardTool(BaseTool):
         self._plan = plan
         return "OK"
 
-    def _sync(self) -> str:
-        try:
-            Path(self._path).write_text(_render_tasks_md(self._plan), encoding="utf-8")
-        except OSError:
-            return "Error: failed to write tasks file"
+    def _sync_markdown(self) -> str:
+        path = Path(self._path)
+        lock_path = path.with_suffix(path.suffix + ".lock")
+        _touch(lock_path)
+        with _file_lock(lock_path):
+            try:
+                path.write_text(_render_tasks_md(self._plan), encoding="utf-8")
+            except OSError:
+                return "Error: failed to write tasks file"
         return "OK"
 
-    def _sync_best_effort(self) -> None:
-        # Best-effort persistence so the manager doesn't need to remember to call sync.
+    def _hydrate_dir(self, *, goal: str) -> str:
+        root = Path(self._path)
         try:
-            Path(self._path).write_text(_render_tasks_md(self._plan), encoding="utf-8")
+            root.mkdir(parents=True, exist_ok=True)
         except OSError:
-            return
+            return "Error: failed to create task list dir"
+
+        lock_path = root / _DIR_LOCK
+        _touch(lock_path)
+
+        with _file_lock(lock_path):
+            meta = {}
+            meta_path = root / _DIR_META
+            if meta_path.exists():
+                try:
+                    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                except Exception:
+                    meta = {}
+
+            plan = TaskPlan(
+                version=int(meta.get("version", 1) or 1),
+                goal=str(meta.get("goal", "")).strip(),
+                tasks={},
+            )
+
+            for p in sorted(root.glob("*.json")):
+                if p.name.startswith("_"):
+                    continue
+                try:
+                    obj = json.loads(p.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+
+                rec = TaskRecord(
+                    id=str(obj.get("id") or "").strip(),
+                    status=str(obj.get("status") or "pending").strip() or "pending",
+                    owner=(str(obj.get("owner")).strip() if obj.get("owner") is not None else None),
+                    blocked_by=[
+                        str(x).strip() for x in (obj.get("blockedBy") or []) if str(x).strip()
+                    ],
+                    subject=str(obj.get("subject") or "").strip(),
+                    description=str(obj.get("description") or "").strip(),
+                    active_form=str(obj.get("activeForm") or "").strip(),
+                    metadata=obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {},
+                    summary=str(obj.get("summary") or "").strip(),
+                    artifacts=[
+                        str(x).strip() for x in (obj.get("artifacts") or []) if str(x).strip()
+                    ],
+                    errors=str(obj.get("errors") or "").strip(),
+                )
+                if rec.id:
+                    plan.tasks[rec.id] = rec
+
+            if goal:
+                plan.goal = goal
+            self._plan = plan
+            # Ensure meta exists even if empty (avoid re-locking).
+            self._sync_dir_unlocked(root)
+
+        return "OK"
+
+    def _sync_dir(self) -> str:
+        root = Path(self._path)
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return "Error: failed to create task list dir"
+
+        lock_path = root / _DIR_LOCK
+        _touch(lock_path)
+
+        with _file_lock(lock_path):
+            self._sync_dir_unlocked(root)
+
+        return "OK"
+
+    def _sync_dir_unlocked(self, root: Path) -> None:
+        """Write dir backend files assuming caller already holds the list lock."""
+        blocks = _compute_blocks(self._plan.tasks)
+
+        meta_path = root / _DIR_META
+        meta_obj = {"version": int(self._plan.version), "goal": self._plan.goal}
+        _atomic_write_json(meta_path, meta_obj)
+
+        desired_files = set()
+        for tid, t in self._plan.tasks.items():
+            fname = _safe_task_filename(tid)
+            desired_files.add(fname)
+            obj = {
+                "id": t.id,
+                "status": t.status,
+                "owner": t.owner,
+                "blockedBy": list(t.blocked_by or []),
+                "blocks": sorted(blocks.get(tid, [])),
+                "subject": t.subject,
+                "description": t.description,
+                "activeForm": t.active_form,
+                "metadata": dict(t.metadata or {}),
+                # Ouro extensions (not part of Claude's minimal fields).
+                "summary": t.summary,
+                "artifacts": list(t.artifacts or []),
+                "errors": t.errors,
+            }
+            _atomic_write_json(root / fname, obj)
+
+        for p in root.glob("*.json"):
+            if p.name.startswith("_"):
+                continue
+            if p.name not in desired_files:
+                with suppress(OSError):
+                    p.unlink()
+
+        # Reserve groups file path (some implementations keep this).
+        _touch(root / _DIR_GROUPS)
 
     def _alloc_id(self) -> str:
         max_n = -1
@@ -382,3 +577,90 @@ def _render_tasks_md(plan: TaskPlan) -> str:
             "",
         ]
     )
+
+
+def _resolve_store_path(
+    *,
+    path: str,
+    store: str,
+    task_list_id: str | None,
+) -> tuple[str, str, str | None]:
+    """Resolve persistence backend and path.
+
+    - Default is markdown `tasks.md` in the current working directory.
+    - If task_list_id is provided, use a Claude-like on-disk directory store rooted at
+      `~/.ouro/tasks/<task_list_id>/`.
+    """
+    store_norm = (store or _DEFAULT_STORE).strip().lower() or _DEFAULT_STORE
+    tid = (task_list_id or "").strip() or None
+
+    if tid:
+        root = Path.home() / ".ouro" / "tasks" / tid
+        return ("dir", str(root), tid)
+
+    path_norm = (path or _DEFAULT_TASKS_PATH).strip() or _DEFAULT_TASKS_PATH
+    if store_norm not in {"markdown", "dir"}:
+        store_norm = _DEFAULT_STORE
+    return (store_norm, path_norm, None)
+
+
+def _safe_task_filename(task_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", task_id or "").strip("_")
+    if not safe:
+        safe = "task"
+    return f"{safe}.json"
+
+
+def _compute_blocks(tasks: dict[str, TaskRecord]) -> dict[str, set[str]]:
+    blocks: dict[str, set[str]] = {tid: set() for tid in tasks}
+    for tid, t in tasks.items():
+        for dep in t.blocked_by or []:
+            if dep in blocks:
+                blocks[dep].add(tid)
+    return blocks
+
+
+def _atomic_write_json(path: Path, obj: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    data = json.dumps(obj, indent=2, ensure_ascii=True) + "\n"
+    tmp.write_text(data, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _touch(path: Path) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch(exist_ok=True)
+    except OSError:
+        return
+
+
+class _file_lock:
+    """Best-effort cross-process lock (Unix via fcntl)."""
+
+    def __init__(self, lock_path: Path) -> None:
+        self._lock_path = lock_path
+        self._fh = None
+
+    def __enter__(self):
+        try:
+            import fcntl  # type: ignore
+
+            self._fh = open(self._lock_path, "a+", encoding="utf-8")
+            fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX)
+        except Exception:
+            self._fh = None
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if self._fh is not None:
+                import fcntl  # type: ignore
+
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                self._fh.close()
+        except Exception:
+            pass
+        self._fh = None
+        return False

@@ -84,3 +84,59 @@ async def test_hydrate_round_trip(tmp_path):
     got = json.loads(await t2.execute(operation="get", path=str(tasks_path), id=created))
     assert got["status"] == "completed"
     assert got["summary"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_dir_store_round_trip(tmp_path):
+    tool = TaskBoardTool()
+    store_dir = tmp_path / "task_list"
+
+    out = await tool.execute(
+        operation="hydrate",
+        path=str(store_dir),
+        store="dir",
+        goal="G",
+    )
+    assert out == "OK"
+
+    t0 = json.loads(
+        await tool.execute(
+            operation="create",
+            path=str(store_dir),
+            store="dir",
+            subject="S0",
+            description="D0",
+        )
+    )["id"]
+    t1 = json.loads(
+        await tool.execute(
+            operation="create",
+            path=str(store_dir),
+            store="dir",
+            subject="S1",
+            description="D1",
+            blocked_by=[t0],
+        )
+    )["id"]
+    await tool.execute(
+        operation="update",
+        path=str(store_dir),
+        store="dir",
+        id=t0,
+        status="completed",
+        summary="done0",
+    )
+
+    # Verify per-task JSON exists with Claude-like keys.
+    t1_path = store_dir / f"{t1}.json"
+    assert t1_path.exists()
+    obj = json.loads(t1_path.read_text(encoding="utf-8"))
+    assert obj["id"] == t1
+    assert obj["blockedBy"] == [t0]
+    assert "activeForm" in obj
+
+    tool2 = TaskBoardTool()
+    out2 = await tool2.execute(operation="hydrate", path=str(store_dir), store="dir", goal="")
+    assert out2 == "OK"
+    got1 = json.loads(await tool2.execute(operation="get", path=str(store_dir), store="dir", id=t1))
+    assert got1["blocked_by"] == [t0]
