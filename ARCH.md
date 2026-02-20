@@ -6,6 +6,19 @@ v1 orchestration is intentionally minimal:
 - LLM does planning and synthesis.
 - Runtime does only mechanical scheduling + artifact persistence.
 
+## Learnings From Claude Code Tasks
+
+Public writeups of Claude Code's evolution from "todos" to "tasks" strongly support a
+control-plane oriented design:
+
+- Tasks are a first-class state primitive (not a second agent loop).
+- Tasks carry dependency metadata (`blockedBy` / `blocks`) and a small set of fields
+  suitable for mechanical scheduling (status/owner/etc).
+- Tasks are persisted on disk and can be shared across sub-agents; the "hydration pattern"
+  keeps an external spec as the durable source of truth, then hydrates tasks into a session.
+
+This v1 follows that same idea, but keeps the IR and runtime as small as possible.
+
 ## Primitives
 
 Orchestration should be composed from small primitives in the manager ReAct loop:
@@ -45,6 +58,17 @@ For deterministic parsing, it SHOULD contain a single fenced JSON block:
 Allowed `status`: `pending | in_progress | completed | failed`.
 
 We store only `blocked_by` edges. The inverse (`blocks`) is derivable.
+
+## Persistence Model (Hydration/Sync)
+
+`tasks.md` is the durable spec. The in-memory task board is session-scoped state.
+
+Hydration/sync rules:
+- At the start of a run (or a new session), hydrate `tasks.md` into the task board.
+- The manager may mutate the task board (status, dependencies, owner, etc).
+- After each mutation (or at fanout barriers), sync back to `tasks.md`.
+
+This preserves determinism and avoids relying on chat context for orchestration state.
 
 ## Scheduling (Round-Based)
 
@@ -86,6 +110,16 @@ tasks.md
 
 Downstream steps should prefer `summary`, and open full artifacts on demand.
 
+## Why Fanout-Only `multi_task`
+
+Claude Code Tasks separates "task graph state" (dependencies, readiness, ownership) from execution.
+v1 adopts the same separation:
+
+- `task_board` owns dependencies.
+- `multi_task` is only for acceleration: N independent ReAct workers, no internal DAG.
+
+This reduces tool-call overhead and makes failure modes easier to diagnose.
+
 ## Parallel Writes (Optional): Lazy Worktree Isolation
 
 If workers are allowed to write/edit/run arbitrary commands in a shared workspace, concurrency is non-deterministic.
@@ -96,3 +130,9 @@ A pragmatic compromise is **write-on-demand worktree isolation**:
 - The worker reports back `WORKTREE_PATH + diff/commit` for the manager to merge.
 
 Even with "all nodes are full ReAct", we still need small hard budgets (`max_parallel`, per-worker timeouts).
+
+## References (External)
+
+- ClaudeLog: "What are Tasks in Claude Code?" (2026-01-22)
+- Rick Hightower: "Claude Code Todos to Tasks" (2026-01-26)
+- Community notes on on-disk storage and cleanup behavior for `~/.claude/tasks`
