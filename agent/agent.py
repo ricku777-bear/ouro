@@ -50,8 +50,8 @@ When you have enough information, provide your final answer directly without usi
 - Use read_file only when you need full contents (avoid reading multiple large files at once)
 - Use smart_edit for precise changes (fuzzy match, auto backup, diff preview)
 - Use write_file only for creating new files or complete rewrites
-- Use multi_task for parallelizable tasks
-- With multi_task, use dependencies only when needed; keep independent tasks dependency-free
+- Use task_board to model dependent workflows (map-reduce, staged execution) as tasks with blocked_by dependencies
+- Use multi_task for pure fanout acceleration: it runs independent sub-agent tasks in parallel (no dependencies inside multi_task)
 - For pure acceleration, do NOT force an extra comparison/synthesis step
 - Only run a second synthesis/comparison pass when the user explicitly asks for consolidated comparison, ranking, or summary
 - Use manage_todo_list to track progress for complex tasks

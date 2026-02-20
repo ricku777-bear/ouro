@@ -1,8 +1,21 @@
-"""Unified multi-task tool for parallel sub-agent execution."""
+"""Fanout-only multi-task tool for parallel sub-agent execution (v1).
+
+Contract:
+- Executes N independent tasks concurrently (fanout).
+- No dependencies/DAG semantics inside this tool.
+- Each sub-agent runs a full ReAct loop (tool calling), but recursion into multi_task is disallowed.
+- Produces bounded structured fields (SUMMARY / KEY_FINDINGS / ERRORS) and writes full artifacts to disk.
+"""
+
+from __future__ import annotations
 
 import asyncio
+import os
+import shutil
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Set
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from llm import LLMMessage
 
@@ -14,29 +27,33 @@ if TYPE_CHECKING:
 
 @dataclass
 class TaskExecutionResult:
-    """Structured result for a single subtask."""
-
     status: str
     output: str
-    summary: str = ""
-    key_findings: str = ""
-    errors: str = ""
+    summary: str
+    key_findings: str
+    errors: str
+    artifact_path: str
+
+
+@dataclass
+class MultiTaskExecution:
+    tasks: list[str]
+    results: dict[int, TaskExecutionResult]
+    artifact_root: Path | None
+    dag_path: str
+    violations: list[str] | None = None
 
 
 class MultiTaskTool(BaseTool):
-    """Execute multiple sub-agent tasks with optional dependency ordering.
-
-    All sub-agents receive the full tool set (minus multi_task itself to
-    prevent recursion). Tasks without dependencies run in parallel; tasks
-    with dependencies wait for their prerequisites.
-    """
+    """Execute independent tasks concurrently using sub-agent ReAct loops."""
 
     MAX_PARALLEL = 4
-    MAX_RESULT_CHARS = 2000
+    MAX_TASKS = 12
+    SUBTASK_TIMEOUT_SECONDS = 300
     SUMMARY_MAX_CHARS = 300
-    CONTEXT_FALLBACK_CHARS = 500
+    NON_CONFORMANT_PREVIEW_CHARS = 500
 
-    def __init__(self, agent: "BaseAgent"):
+    def __init__(self, agent: BaseAgent):
         self.agent = agent
 
     @property
@@ -45,411 +62,405 @@ class MultiTaskTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return """Execute multiple tasks in parallel using sub-agents.
-
-Use this tool when you need to:
-- Run 2+ independent or semi-dependent tasks concurrently
-- Gather context from multiple sources in parallel
-- Execute a structured plan with dependency relationships
-
-Input parameters:
-- tasks (required): Array of task description strings
-- dependencies (optional): Object mapping task index to array of prerequisite indices
-  Example: {"2": ["0", "1"]} means task 2 waits for tasks 0 and 1
-- max_parallel (optional): Maximum concurrent subtasks (default: 4)"""
+        return (
+            "Execute multiple independent tasks in parallel using sub-agents (fanout only).\n\n"
+            "Input: tasks[] (strings), max_parallel.\n"
+            "Output: per-task summaries plus artifact paths.\n"
+            "Use this to speed up independent work; encode dependencies as multiple rounds in the manager."
+        )
 
     @property
-    def parameters(self) -> Dict[str, Any]:
+    def parameters(self) -> dict[str, Any]:
         return {
             "tasks": {
                 "type": "array",
-                "description": "List of task descriptions to execute",
+                "description": "List of independent task descriptions to execute (fanout only)",
                 "items": {"type": "string"},
-            },
-            "dependencies": {
-                "type": "object",
-                "description": "Map of task index to array of prerequisite indices",
-                "additionalProperties": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                },
-                "default": {},
             },
             "max_parallel": {
                 "type": "integer",
-                "description": "Maximum number of subtasks to run concurrently (default: 4)",
+                "description": f"Max concurrent subtasks (default: {self.MAX_PARALLEL})",
                 "minimum": 1,
                 "default": self.MAX_PARALLEL,
             },
         }
 
-    def to_anthropic_schema(self) -> Dict[str, Any]:
-        """Convert to Anthropic tool schema format."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": {
-                "type": "object",
-                "properties": self.parameters,
-                "required": ["tasks"],
-            },
-        }
-
     async def execute(
         self,
-        tasks: List[str],
-        dependencies: Dict[str, List[str]] = None,
+        tasks: list[str] | None = None,
         max_parallel: int | None = None,
+        timeout: float | None = None,
     ) -> str:
-        if not tasks:
-            return "Error: No tasks provided"
-
-        dependencies = dependencies or {}
-
-        parallel_limit = self._resolve_parallel_limit(max_parallel)
-        if parallel_limit is None:
-            return "Error: max_parallel must be a positive integer"
-
-        validation_error = self._validate_dependencies(tasks, dependencies)
-        if validation_error:
-            return validation_error
-
-        subtask_tools = self._get_subtask_tools()
-        results = await self._execute_with_dependencies(
-            tasks, dependencies, subtask_tools, max_parallel=parallel_limit
+        del timeout
+        execution = await self.execute_structured(
+            tasks=tasks or [],
+            max_parallel=max_parallel,
+            artifact_root=None,
+            cleanup=None,
         )
-        return self._format_results(tasks, results)
+        if execution.violations:
+            return self._format_preflight_failure(execution.violations)
+        return self._format_results(execution.tasks, execution.results, dag_path=execution.dag_path)
 
-    # ------------------------------------------------------------------
-    # Dependency validation
-    # ------------------------------------------------------------------
+    async def execute_structured(
+        self,
+        *,
+        tasks: list[str],
+        max_parallel: int | None,
+        artifact_root: Path | None,
+        cleanup: bool | None,
+    ) -> MultiTaskExecution:
+        normalized = [str(t).strip() for t in (tasks or []) if str(t).strip()]
+        if not normalized:
+            return MultiTaskExecution(
+                tasks=[],
+                results={},
+                artifact_root=None,
+                dag_path="UNAVAILABLE",
+                violations=["No tasks provided."],
+            )
+        if len(normalized) > self.MAX_TASKS:
+            return MultiTaskExecution(
+                tasks=[],
+                results={},
+                artifact_root=None,
+                dag_path="UNAVAILABLE",
+                violations=[f"Too many tasks: {len(normalized)} > MAX_TASKS({self.MAX_TASKS})."],
+            )
 
-    def _validate_dependencies(
-        self, tasks: List[str], dependencies: Dict[str, List[str]]
-    ) -> str | None:
-        task_count = len(tasks)
+        parallel_limit = _to_pos_int(max_parallel, default=self.MAX_PARALLEL)
+        run_dir = artifact_root or self._prepare_artifact_run_dir()
+        if run_dir is None:
+            # Still run but without artifacts.
+            run_dir = None
 
-        def _valid_index(s: str) -> int | None:
-            try:
-                idx = int(s)
-                return idx if 0 <= idx < task_count else None
-            except ValueError:
-                return None
+        tools = self._get_subtask_tools()
+        results = await self._execute_fanout(
+            normalized,
+            tools,
+            artifact_root=run_dir,
+            max_parallel=parallel_limit,
+        )
 
-        for task_idx, deps in dependencies.items():
-            if _valid_index(task_idx) is None:
-                return f"Error: Invalid task index {task_idx}"
-            for dep in deps:
-                if _valid_index(dep) is None:
-                    return f"Error: Invalid dependency index {dep}"
+        dag_path = self._write_dag_visualization(normalized, results, run_dir)
 
-        if self._has_cycle(task_count, dependencies):
-            return "Error: Circular dependency detected in tasks"
+        should_cleanup = cleanup
+        if should_cleanup is None:
+            should_cleanup = not self._should_keep_artifacts()
+        if should_cleanup:
+            self._cleanup_artifact_run_dir(run_dir)
+            dag_path = "CLEANED" if dag_path != "UNAVAILABLE" else "UNAVAILABLE"
 
-        return None
-
-    def _has_cycle(self, task_count: int, dependencies: Dict[str, List[str]]) -> bool:
-        graph: Dict[int, List[int]] = {i: [] for i in range(task_count)}
-        for task_idx, deps in dependencies.items():
-            idx = int(task_idx)
-            for dep in deps:
-                graph[int(dep)].append(idx)
-
-        WHITE, GRAY, BLACK = 0, 1, 2
-        colors = [WHITE] * task_count
-
-        def dfs(node: int) -> bool:
-            colors[node] = GRAY
-            for neighbor in graph[node]:
-                if colors[neighbor] == GRAY:
-                    return True
-                if colors[neighbor] == WHITE and dfs(neighbor):
-                    return True
-            colors[node] = BLACK
-            return False
-
-        return any(colors[i] == WHITE and dfs(i) for i in range(task_count))
-
-    # ------------------------------------------------------------------
-    # Tool filtering
-    # ------------------------------------------------------------------
-
-    def _get_subtask_tools(self) -> List[Dict[str, Any]]:
-        all_tools = self.agent.tool_executor.get_tool_schemas()
-        return [
-            t
-            for t in all_tools
-            if (t.get("name") or t.get("function", {}).get("name")) != self.name
-        ]
-
-    def _resolve_parallel_limit(self, max_parallel: int | None) -> int | None:
-        if max_parallel is None:
-            return self.MAX_PARALLEL
-        try:
-            value = int(max_parallel)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
+        return MultiTaskExecution(
+            tasks=normalized,
+            results=results,
+            artifact_root=run_dir,
+            dag_path=dag_path,
+            violations=None,
+        )
 
     # ------------------------------------------------------------------
     # Execution
     # ------------------------------------------------------------------
 
-    async def _execute_with_dependencies(
+    async def _execute_fanout(
         self,
-        tasks: List[str],
-        dependencies: Dict[str, List[str]],
-        tools: List[Dict[str, Any]],
+        tasks: list[str],
+        tools: list[dict[str, Any]],
+        *,
+        artifact_root: Path | None,
         max_parallel: int,
-    ) -> Dict[int, TaskExecutionResult]:
-        results: Dict[int, TaskExecutionResult] = {}
-        successful: Set[int] = set()
-        task_count = len(tasks)
-        pending: Set[int] = set(range(task_count))
+    ) -> dict[int, TaskExecutionResult]:
+        semaphore = asyncio.Semaphore(max_parallel)
+        timeout_seconds = float(
+            os.getenv("OURO_SUBTASK_TIMEOUT_SECONDS", str(self.SUBTASK_TIMEOUT_SECONDS))
+        )
+        results: dict[int, TaskExecutionResult] = {}
 
-        deps: Dict[int, Set[int]] = {}
-        for task_idx, dep_list in dependencies.items():
-            deps[int(task_idx)] = {int(d) for d in dep_list}
-
-        while pending:
-            blocked: List[int] = []
-            for idx in sorted(pending):
-                failed_deps = [
-                    dep
-                    for dep in sorted(deps.get(idx, set()))
-                    if dep in results and results[dep].status != "success"
-                ]
-                if failed_deps:
-                    dep_list = ", ".join(str(dep) for dep in failed_deps)
-                    results[idx] = TaskExecutionResult(
-                        status="skipped",
-                        output=f"Skipped: dependency tasks failed ({dep_list}).",
-                        errors=f"dependency tasks failed ({dep_list})",
+        async def run_one(idx: int) -> None:
+            async with semaphore:
+                try:
+                    output = await asyncio.wait_for(
+                        self._run_subtask(idx, tasks[idx], tools),
+                        timeout=timeout_seconds,
                     )
-                    blocked.append(idx)
+                    results[idx] = self._build_result(idx, tasks[idx], output, artifact_root)
+                except asyncio.TimeoutError:
+                    msg = f"Task timed out after {timeout_seconds}s."
+                    results[idx] = self._build_result(
+                        idx, tasks[idx], msg, artifact_root, status="failed"
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    msg = f"Task failed: {str(e)}"
+                    results[idx] = self._build_result(
+                        idx, tasks[idx], msg, artifact_root, status="failed"
+                    )
 
-            for idx in blocked:
-                pending.discard(idx)
-
-            ready = [
-                i
-                for i in range(task_count)
-                if i in pending and deps.get(i, set()).issubset(successful)
-            ]
-            if not ready:
-                break
-
-            batch = ready[:max_parallel]
-            batch_results = await self._execute_batch(batch, tasks, tools, deps, results)
-
-            for idx, result in batch_results.items():
-                results[idx] = result
-                pending.discard(idx)
-                if result.status == "success":
-                    successful.add(idx)
-
-        # Defensive fallback: mark any leftover tasks as skipped.
-        for idx in sorted(pending):
-            results[idx] = TaskExecutionResult(
-                status="skipped",
-                output="Skipped: dependencies were not satisfied.",
-                errors="dependencies were not satisfied",
-            )
-
-        return results
-
-    async def _execute_batch(
-        self,
-        batch: List[int],
-        tasks: List[str],
-        tools: List[Dict[str, Any]],
-        deps: Dict[int, Set[int]],
-        previous_results: Dict[int, TaskExecutionResult],
-    ) -> Dict[int, TaskExecutionResult]:
-        async def run_single(idx: int) -> tuple:
-            try:
-                dependency_results = {
-                    dep: previous_results[dep]
-                    for dep in sorted(deps.get(idx, set()))
-                    if dep in previous_results
-                }
-                output = await self._run_subtask(idx, tasks[idx], tools, dependency_results)
-                return idx, self._build_success_result(output)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                message = f"Task failed: {str(e)}"
-                return idx, TaskExecutionResult(status="failed", output=message, errors=str(e))
-
-        results = {}
         async with asyncio.TaskGroup() as tg:
-            task_list = [tg.create_task(run_single(idx)) for idx in batch]
-
-        for task in task_list:
-            idx, result = task.result()
-            results[idx] = result
+            for i in range(len(tasks)):
+                tg.create_task(run_one(i))
 
         return results
 
-    async def _run_subtask(
+    async def _run_subtask(self, idx: int, task_desc: str, tools: list[dict[str, Any]]) -> str:
+        prompt = "\n".join(
+            [
+                "<role>",
+                "You are a sub-agent executing one independent work unit.",
+                "</role>",
+                "",
+                "<instructions>",
+                "- You may use tools as needed to complete the task.",
+                "- Do NOT call multi_task or task_board.",
+                "- Final response MUST follow this exact structure:",
+                f"  SUMMARY: <concise summary, max {self.SUMMARY_MAX_CHARS} chars>",
+                "  KEY_FINDINGS:",
+                "  - <finding 1>",
+                "  - <finding 2>",
+                "  ERRORS:",
+                "  - none (if no errors) OR list concrete errors",
+                "</instructions>",
+                "",
+                "<task>",
+                f"Task #{idx}: {task_desc}",
+                "</task>",
+                "",
+                "Execute the task now:",
+            ]
+        )
+        messages = [LLMMessage(role="user", content=prompt)]
+        return await self.agent._react_loop(
+            messages=messages, tools=tools, use_memory=False, save_to_memory=False
+        )
+
+    # ------------------------------------------------------------------
+    # Tools / artifacts
+    # ------------------------------------------------------------------
+
+    def _get_subtask_tools(self) -> list[dict[str, Any]]:
+        schemas = self.agent.tool_executor.get_tool_schemas()
+        excluded = {"multi_task", "task_board", "manage_todo_list"}
+        filtered: list[dict[str, Any]] = []
+        for schema in schemas:
+            name = schema.get("name") or schema.get("function", {}).get("name") or ""
+            if name in excluded:
+                continue
+            filtered.append(schema)
+        return filtered
+
+    def _prepare_artifact_run_dir(self) -> Path | None:
+        run_id = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        path = Path.cwd() / ".ouro_artifacts" / run_id
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return path
+
+    def _cleanup_artifact_run_dir(self, run_dir: Path | None) -> None:
+        if run_dir is None:
+            return
+        try:
+            shutil.rmtree(run_dir)
+        except OSError:
+            return
+
+    def _build_result(
         self,
         idx: int,
         task_desc: str,
-        tools: List[Dict[str, Any]],
-        dependency_results: Dict[int, TaskExecutionResult],
-    ) -> str:
-        context = self._build_task_context(dependency_results)
+        output: str,
+        artifact_root: Path | None,
+        *,
+        status: str = "success",
+    ) -> TaskExecutionResult:
+        summary, key_findings, errors = _extract_sections(output)
+        if not summary:
+            summary = _fallback_summary(output, max_chars=self.SUMMARY_MAX_CHARS)
+        if not key_findings:
+            key_findings = "- (not provided)"
+        if not errors:
+            errors = "- none"
 
-        prompt = f"""<role>
-You are a sub-agent executing one task in a parallel plan.
-Complete this task using the tools available to you.
-</role>
-
-<task>
-Task #{idx}: {task_desc}
-</task>
-
-{context}
-
-<instructions>
-1. Use available tools to accomplish the task
-2. Focus ONLY on this specific task
-3. Final response MUST follow this exact structure:
-   SUMMARY: <concise summary, max 300 chars>
-   KEY_FINDINGS:
-   - <finding 1>
-   - <finding 2>
-   ERRORS:
-   - none (if no errors) OR list concrete errors
-</instructions>
-
-Execute the task now:"""
-
-        messages = [LLMMessage(role="user", content=prompt)]
-
-        return await self.agent._react_loop(
-            messages=messages,
-            tools=tools,
-            use_memory=False,
-            save_to_memory=False,
-        )
-
-    def _build_success_result(self, output: str) -> TaskExecutionResult:
-        summary, key_findings, errors = self._extract_structured_sections(output)
-        return TaskExecutionResult(
-            status="success",
+        artifact_path = self._write_task_artifact(
+            artifact_root=artifact_root,
+            idx=idx,
+            task_desc=task_desc,
             output=output,
-            summary=summary or "",
-            key_findings=key_findings or "",
-            errors=errors or "",
+            summary=summary,
+            key_findings=key_findings,
+            errors=errors,
+            status=status,
         )
 
-    def _extract_structured_sections(
-        self, output: str
-    ) -> tuple[str | None, str | None, str | None]:
-        section_aliases = {
-            "summary": "SUMMARY:",
-            "key_findings": "KEY_FINDINGS:",
-            "errors": "ERRORS:",
-        }
-        sections: Dict[str, List[str]] = {name: [] for name in section_aliases}
-        active_section: str | None = None
+        return TaskExecutionResult(
+            status=status,
+            output=output,
+            summary=summary,
+            key_findings=key_findings,
+            errors=errors,
+            artifact_path=artifact_path,
+        )
 
-        for raw_line in output.splitlines():
-            stripped = raw_line.strip()
-            matched_section = None
+    def _write_task_artifact(
+        self,
+        *,
+        artifact_root: Path | None,
+        idx: int,
+        task_desc: str,
+        output: str,
+        summary: str,
+        key_findings: str,
+        errors: str,
+        status: str,
+    ) -> str:
+        if artifact_root is None:
+            return "UNAVAILABLE"
+        path = artifact_root / f"task_{idx}.md"
+        content = "\n".join(
+            [
+                "# Task Artifact",
+                "",
+                f"task_idx: {idx}",
+                f"status: {status}",
+                f"task_desc: {task_desc}",
+                "",
+                "## SUMMARY",
+                summary or "(missing)",
+                "",
+                "## KEY_FINDINGS",
+                key_findings or "(missing)",
+                "",
+                "## ERRORS",
+                errors or "(missing)",
+                "",
+                "## RAW_OUTPUT",
+                output or "",
+                "",
+            ]
+        )
+        try:
+            path.write_text(content, encoding="utf-8")
+        except OSError:
+            return "UNAVAILABLE"
+        return str(path)
 
-            upper = stripped.upper()
-            for section_name, prefix in section_aliases.items():
-                if upper.startswith(prefix):
-                    matched_section = section_name
-                    active_section = section_name
-                    inline = stripped[len(prefix) :].strip()
-                    if inline:
-                        sections[section_name].append(inline)
-                    break
+    def _write_dag_visualization(
+        self,
+        tasks: list[str],
+        results: dict[int, TaskExecutionResult],
+        artifact_root: Path | None,
+    ) -> str:
+        if artifact_root is None:
+            return "UNAVAILABLE"
+        path = artifact_root / "dag.mmd"
+        lines = ["flowchart TD"]
+        for idx, task in enumerate(tasks):
+            r = results.get(idx)
+            status = r.status if r else "not_executed"
+            label = _sanitize_mermaid_label(task)[:80]
+            lines.append(f'    T{idx}["#{idx} {label}<br/>status={status}"]')
+        try:
+            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError:
+            return "UNAVAILABLE"
+        return str(path)
 
-            if matched_section is not None:
+    # ------------------------------------------------------------------
+    # Formatting
+    # ------------------------------------------------------------------
+
+    def _format_preflight_failure(self, violations: list[str]) -> str:
+        lines = ["# Multi-Task", "STATUS: PLAN_REJECTED", "VIOLATIONS:"]
+        lines.extend(f"- {v}" for v in violations)
+        return "\n".join(lines)
+
+    def _format_results(
+        self, tasks: list[str], results: dict[int, TaskExecutionResult], *, dag_path: str
+    ) -> str:
+        parts = ["# Multi-Task Results", f"DAG_PATH: {dag_path}", ""]
+        for idx in range(len(tasks)):
+            r = results.get(idx)
+            if r is None:
+                parts.append(f"## Task {idx}\nStatus: not_executed\n")
                 continue
+            parts.append(
+                "\n".join(
+                    [
+                        f"## Task {idx}",
+                        f"Status: {r.status}",
+                        f"SUMMARY: {r.summary}",
+                        "KEY_FINDINGS:",
+                        r.key_findings,
+                        "ERRORS:",
+                        r.errors,
+                        f"ARTIFACT_PATH: {r.artifact_path}",
+                        "",
+                    ]
+                )
+            )
+        return "\n".join(parts).strip() + "\n"
 
-            if active_section is not None:
-                sections[active_section].append(stripped)
+    def _should_keep_artifacts(self) -> bool:
+        keep_flag = os.getenv("OURO_KEEP_MULTITASK_ARTIFACTS")
+        if keep_flag is not None:
+            return keep_flag.strip().lower() in {"1", "true", "yes", "on"}
+        verbose_flag = os.getenv("OURO_VERBOSE", "0")
+        return verbose_flag.strip().lower() in {"1", "true", "yes", "on"}
 
-        def _normalize(lines: List[str]) -> str | None:
-            cleaned = [line for line in lines if line.strip()]
-            if not cleaned:
-                return None
-            return "\n".join(cleaned).strip()
 
-        summary = _normalize(sections["summary"])
-        if summary and len(summary) > self.SUMMARY_MAX_CHARS:
-            summary = summary[: self.SUMMARY_MAX_CHARS] + "... [truncated]"
+def _to_pos_int(value: Any, *, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return n if n > 0 else default
 
-        key_findings = _normalize(sections["key_findings"])
-        errors = _normalize(sections["errors"])
-        return summary, key_findings, errors
 
-    def _truncate_for_context_fallback(self, text: str) -> str:
-        if len(text) <= self.CONTEXT_FALLBACK_CHARS:
-            return text
+def _sanitize_mermaid_label(value: str) -> str:
+    text = (value or "").replace("\n", " ").replace('"', "'").strip()
+    text = text.replace("[", "(").replace("]", ")")
+    return text if text else "(empty task)"
 
-        head = int(self.CONTEXT_FALLBACK_CHARS * 0.65)
-        tail = self.CONTEXT_FALLBACK_CHARS - head
-        return f"{text[:head]}... [truncated] ...{text[-tail:]}"
 
-    def _has_meaningful_errors(self, errors: str) -> bool:
-        normalized = errors.strip().lower()
-        return normalized not in {"", "none", "- none", "n/a", "no errors"}
+def _extract_sections(output: str) -> tuple[str | None, str | None, str | None]:
+    aliases = {"summary": "SUMMARY:", "key_findings": "KEY_FINDINGS:", "errors": "ERRORS:"}
+    sections: dict[str, list[str]] = {k: [] for k in aliases}
+    active: str | None = None
+    for raw in (output or "").splitlines():
+        stripped = raw.strip()
+        upper = stripped.upper()
+        matched = None
+        for name, prefix in aliases.items():
+            if upper.startswith(prefix):
+                matched = name
+                active = name
+                inline = stripped[len(prefix) :].strip()
+                if inline:
+                    sections[name].append(inline)
+                break
+        if matched is not None:
+            continue
+        if active is not None:
+            sections[active].append(stripped)
 
-    # ------------------------------------------------------------------
-    # Formatting helpers
-    # ------------------------------------------------------------------
+    def norm(lines: list[str]) -> str | None:
+        cleaned = [ln for ln in lines if ln.strip()]
+        if not cleaned:
+            return None
+        return "\n".join(cleaned).strip()
 
-    def _build_task_context(self, dependency_results: Dict[int, TaskExecutionResult]) -> str:
-        if not dependency_results:
-            return ""
+    return norm(sections["summary"]), norm(sections["key_findings"]), norm(sections["errors"])
 
-        parts = ["<dependency_results>"]
-        for idx, result in sorted(dependency_results.items()):
-            summary = result.summary or self._truncate_for_context_fallback(result.output)
-            parts.append(f"Task #{idx} SUMMARY:\n{summary}\n")
 
-            if self._has_meaningful_errors(result.errors):
-                truncated_errors = self._truncate_for_context_fallback(result.errors)
-                parts.append(f"Task #{idx} ERRORS:\n{truncated_errors}\n")
-        parts.append("</dependency_results>")
-        return "\n".join(parts)
-
-    def _format_results(self, tasks: List[str], results: Dict[int, TaskExecutionResult]) -> str:
-        if not results:
-            return "No task results."
-
-        status_map = {
-            "success": "Completed",
-            "failed": "Failed",
-            "skipped": "Skipped",
-        }
-
-        parts = ["# Multi-Task Results\n"]
-        for idx, task_desc in enumerate(tasks):
-            result = results.get(idx)
-            if result:
-                status = status_map.get(result.status, result.status.title())
-                if result.summary:
-                    sections = [f"SUMMARY: {result.summary}"]
-                    if result.key_findings:
-                        sections.append(f"KEY_FINDINGS:\n{result.key_findings}")
-                    if self._has_meaningful_errors(result.errors):
-                        sections.append(f"ERRORS:\n{result.errors}")
-                    output = "\n".join(sections)
-                else:
-                    output = result.output
-                    if len(output) > self.MAX_RESULT_CHARS:
-                        output = output[: self.MAX_RESULT_CHARS] + "... [truncated]"
-            else:
-                output = "Not executed"
-                status = "Failed"
-
-            parts.append(f"## Task {idx}: {task_desc[:100]}\n**Status:** {status}\n{output}\n")
-
-        return "\n".join(parts)
+def _fallback_summary(output: str, *, max_chars: int) -> str:
+    text = (output or "").strip()
+    if not text:
+        return "(empty)"
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    joined = " ".join(lines) if lines else text
+    return joined if len(joined) <= max_chars else joined[:max_chars].rstrip() + "..."

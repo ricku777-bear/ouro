@@ -125,7 +125,7 @@ ouro --resume a1b2c3d4
 
 - **Unified agent loop**: Think-Act-Observe cycle — planning, sub-agents, and tool use all happen in one loop, chosen autonomously by the agent
 - **Self-verification**: Ralph Loop verifies the agent's answer against the original task and re-enters if incomplete (`--verify`)
-- **Parallel execution**: Concurrent readonly tool calls in a single turn, plus `multi_task` for spawning parallel sub-agents with dependency ordering
+- **Parallel execution**: Concurrent readonly tool calls in a single turn, plus `multi_task` for spawning parallel sub-agents (fanout only). Encode dependencies via multiple rounds (e.g., with `task_board`).
 - **Memory system**: LLM-driven compression (sliding window / selective / deletion), git-aware long-term memory, and YAML session persistence resumable via `--resume`
 - **OAuth login**: `--login` / `/login` to authenticate with ChatGPT Codex subscription models; bundled OAuth catalog auto-synced
 - **TUI**: Dark/light themes, slash-command autocomplete, live status bar, token & cache tracking (`/stats`)
