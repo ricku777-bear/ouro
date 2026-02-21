@@ -1,6 +1,7 @@
 """Core memory manager that orchestrates all memory operations."""
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import litellm
@@ -17,6 +18,23 @@ from .token_tracker import TokenTracker
 from .types import CompressedMemory, CompressionStrategy
 
 logger = logging.getLogger(__name__)
+
+_LTM_BLOCK_RE = re.compile(
+    r"<long_term_memories>\s*(.*?)\s*</long_term_memories>",
+    re.DOTALL,
+)
+
+
+def _strip_ltm_block(text: str) -> str:
+    """Remove ``<long_term_memories>...</long_term_memories>`` from *text*."""
+    return _LTM_BLOCK_RE.sub("", text).strip()
+
+
+def _extract_ltm_block(text: str) -> str:
+    """Return the content inside ``<long_term_memories>`` or empty string."""
+    m = _LTM_BLOCK_RE.search(text)
+    return m.group(1).strip() if m else ""
+
 
 if TYPE_CHECKING:
     from llm import LiteLLMAdapter
@@ -318,6 +336,9 @@ class MemoryManager:
         does NOT include the conversation messages (they are already in the LLM
         context), so the LLM call reuses the cached prefix.
 
+        When long-term memory is enabled, the prompt also asks the LLM to
+        extract durable memories in a ``<long_term_memories>`` XML block.
+
         Returns:
             LLMMessage with role="user" containing the compaction instruction
         """
@@ -327,7 +348,11 @@ class MemoryManager:
         todo_context = self._todo_context_provider() if self._todo_context_provider else None
 
         prompt_text = self.compressor.build_compaction_prompt(
-            messages, strategy, target_tokens, todo_context
+            messages,
+            strategy,
+            target_tokens,
+            todo_context,
+            ltm_enabled=self._long_term is not None,
         )
         return LLMMessage(role="user", content=prompt_text)
 
@@ -362,6 +387,9 @@ class MemoryManager:
         This is the counterpart to get_compaction_prompt() — called after
         the LLM produces the summary in the react loop.
 
+        When long-term memory is enabled, this also extracts and persists
+        any ``<long_term_memories>`` block from the summary.
+
         Args:
             summary_text: The LLM-generated summary text
             usage: Optional token usage from the compression LLM call
@@ -377,6 +405,14 @@ class MemoryManager:
         logger.info(
             f"🗜️  Applying compression to {len(messages)} messages using {strategy} strategy"
         )
+
+        # Extract and persist long-term memories before stripping from summary
+        if self._long_term is not None:
+            self._extract_and_save_ltm(summary_text)
+
+        # Strip the <long_term_memories> block from the summary so it doesn't
+        # consume short-term context tokens.
+        summary_text = _strip_ltm_block(summary_text)
 
         # Inject todo context into summary
         if todo_context and "[Current Tasks]" not in summary_text:
@@ -614,7 +650,7 @@ class MemoryManager:
         Returns:
             Dict with statistics
         """
-        return {
+        stats: Dict[str, Any] = {
             "current_tokens": self.current_tokens,
             "total_input_tokens": self.token_tracker.total_input_tokens,
             "total_output_tokens": self.token_tracker.total_output_tokens,
@@ -628,7 +664,9 @@ class MemoryManager:
             "short_term_count": self.short_term.count(),
             "tool_schema_tokens": self._tool_schema_tokens,
             "total_cost": self.token_tracker.get_total_cost(self.llm.model),
+            "ltm_enabled": self._long_term is not None,
         }
+        return stats
 
     async def save_memory(self):
         """Save current memory state to store.
@@ -669,6 +707,42 @@ class MemoryManager:
         self.last_compression_savings = 0
         self.compression_count = 0
         self._compression_needed = False
+
+    def _extract_and_save_ltm(self, summary_text: str) -> None:
+        """Extract ``<long_term_memories>`` from *summary_text* and append to store.
+
+        Runs synchronously (file I/O via asyncio.to_thread happens inside
+        the store) but is called from the synchronous ``apply_compression``,
+        so we schedule the async save as a fire-and-forget task.
+        """
+        import asyncio
+
+        new_memories = _extract_ltm_block(summary_text)
+        if not new_memories or self._long_term is None:
+            return
+
+        ltm = self._long_term
+
+        async def _save() -> None:
+            try:
+                existing = await ltm.store.load()
+                if existing.strip():
+                    merged = existing.rstrip("\n") + "\n\n" + new_memories + "\n"
+                else:
+                    merged = new_memories + "\n"
+                await ltm.store.save(merged)
+                logger.info(
+                    "Saved %d chars of long-term memories during compaction", len(new_memories)
+                )
+            except Exception:
+                logger.warning("Failed to save long-term memories during compaction", exc_info=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_save())
+        except RuntimeError:
+            # No running loop — shouldn't happen in normal flow, but be safe
+            logger.debug("No running event loop; skipping LTM save")
 
     def rollback_incomplete_exchange(self) -> None:
         """Rollback the last incomplete assistant response with tool_calls.
