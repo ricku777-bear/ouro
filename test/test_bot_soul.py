@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from bot.soul import _DEFAULT_SOUL, ensure_soul_file, load_soul
 
 

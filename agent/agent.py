@@ -90,9 +90,6 @@ AGENTS.md is optional. If not found, proceed normally.
         # This allows multi-turn conversations to reuse the same system message
         if not self.memory.system_messages:
             system_content = self.SYSTEM_PROMPT
-            # Prepend soul/personality section when running in bot mode
-            if self._soul_section:
-                system_content = self._soul_section + "\n\n" + system_content
             try:
                 context = await format_context_prompt()
                 system_content = system_content + "\n" + context
@@ -115,6 +112,18 @@ AGENTS.md is optional. If not found, proceed normally.
             # Inject skills section if available
             if self._skills_section:
                 system_content = system_content + "\n\n" + self._skills_section
+
+            # Append soul/personality section at the end (bot mode only).
+            # Placed last so it benefits from recency bias for style influence
+            # while core instructions (tools, safety) retain higher priority.
+            if self._soul_section:
+                system_content = (
+                    system_content
+                    + "\n\n# Soul\n\n"
+                    + "If the following soul section is present, embody its persona and tone. "
+                    + "Follow its guidance unless higher-priority instructions override it.\n\n"
+                    + self._soul_section
+                )
 
             # Add system message only on first turn
             await self.memory.add_message(LLMMessage(role="system", content=system_content))
