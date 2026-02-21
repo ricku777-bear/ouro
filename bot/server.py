@@ -322,8 +322,8 @@ async def run_bot(model_id: str | None = None) -> None:
     channels = _build_channels()
     if not channels:
         print(
-            "No IM channels configured. Set OURO_LARK_APP_ID/OURO_LARK_APP_SECRET "
-            "or OURO_SLACK_BOT_TOKEN/OURO_SLACK_APP_TOKEN to enable a channel.",
+            "No IM channels configured. Add LARK_APP_ID/LARK_APP_SECRET "
+            "or SLACK_BOT_TOKEN/SLACK_APP_TOKEN to ~/.ouro/config.",
             file=sys.stderr,
         )
         return

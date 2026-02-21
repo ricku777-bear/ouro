@@ -6,11 +6,18 @@ Bot mode turns ouro into a persistent IM assistant. Each chat conversation maps 
 
 ```bash
 pip install ouro-ai[bot]
+```
 
-# Configure at least one channel (see LARK.md / SLACK.md)
-export OURO_LARK_APP_ID="cli_xxx"
-export OURO_LARK_APP_SECRET="your_secret"
+Add credentials to `~/.ouro/config` (see [LARK.md](LARK.md) / [SLACK.md](SLACK.md)):
 
+```
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=your_secret
+```
+
+Then start:
+
+```bash
 ouro --bot
 ```
 
@@ -73,7 +80,7 @@ GET /health
 {"status": "ok", "active_sessions": 3}
 ```
 
-Default: `0.0.0.0:8080`. Configure with `OURO_BOT_HOST` / `OURO_BOT_PORT`.
+Default: `0.0.0.0:8080`. Configure with `BOT_HOST` / `BOT_PORT` in `~/.ouro/config`.
 
 ## Session Lifecycle
 
@@ -87,4 +94,4 @@ Default: `0.0.0.0:8080`. Configure with `OURO_BOT_HOST` / `OURO_BOT_PORT`.
 - **Lark (Feishu)**: See [LARK.md](LARK.md)
 - **Slack**: See [SLACK.md](SLACK.md)
 
-Both channels can run simultaneously — set all four environment variables and both will be active.
+Both channels can run simultaneously — add all four keys to `~/.ouro/config` and both will be active.

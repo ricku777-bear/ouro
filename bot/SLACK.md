@@ -48,10 +48,16 @@ Copy the **Bot User OAuth Token** (`xoxb-...`).
 
 ## 6. Run
 
-```bash
-export OURO_SLACK_BOT_TOKEN="xoxb-your-bot-token"
-export OURO_SLACK_APP_TOKEN="xapp-your-app-token"
+Add credentials to `~/.ouro/config`:
 
+```
+SLACK_BOT_TOKEN=xoxb-your-bot-token
+SLACK_APP_TOKEN=xapp-your-app-token
+```
+
+Then start:
+
+```bash
 ouro --bot
 ```
 
@@ -68,15 +74,13 @@ Open a DM with your bot in Slack and send a message. You should receive "Working
 
 ## Running Both Lark and Slack
 
-Set all four environment variables and both channels will be active:
+Add all four keys to `~/.ouro/config` and both channels will be active:
 
-```bash
-export OURO_LARK_APP_ID="cli_xxx"
-export OURO_LARK_APP_SECRET="xxx"
-export OURO_SLACK_BOT_TOKEN="xoxb-xxx"
-export OURO_SLACK_APP_TOKEN="xapp-xxx"
-
-ouro --bot
+```
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=xxx
+SLACK_BOT_TOKEN=xoxb-xxx
+SLACK_APP_TOKEN=xapp-xxx
 ```
 
 ```
@@ -94,6 +98,6 @@ Bot server listening on 0.0.0.0:8080
 
 ### "invalid_auth" errors
 
-- Ensure `OURO_SLACK_BOT_TOKEN` starts with `xoxb-`
-- Ensure `OURO_SLACK_APP_TOKEN` starts with `xapp-`
+- Ensure `SLACK_BOT_TOKEN` starts with `xoxb-`
+- Ensure `SLACK_APP_TOKEN` starts with `xapp-`
 - Re-install the app to your workspace if tokens have been rotated

@@ -133,15 +133,19 @@ pip install ouro-ai[bot]
 
 ### Quick Start
 
-```bash
+Add credentials to `~/.ouro/config`:
+
+```
 # Lark
-export OURO_LARK_APP_ID="cli_xxx"
-export OURO_LARK_APP_SECRET="xxx"
-ouro --bot
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=xxx
 
 # Slack
-export OURO_SLACK_BOT_TOKEN="xoxb-xxx"
-export OURO_SLACK_APP_TOKEN="xapp-xxx"
+SLACK_BOT_TOKEN=xoxb-xxx
+SLACK_APP_TOKEN=xapp-xxx
+```
+
+```bash
 ouro --bot
 ```
 

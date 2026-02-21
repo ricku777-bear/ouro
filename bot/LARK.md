@@ -55,10 +55,16 @@ For enterprise custom apps, approval is usually automatic.
 
 ## 8. Run
 
-```bash
-export OURO_LARK_APP_ID="cli_xxx"
-export OURO_LARK_APP_SECRET="your_app_secret"
+Add credentials to `~/.ouro/config`:
 
+```
+LARK_APP_ID=cli_xxx
+LARK_APP_SECRET=your_app_secret
+```
+
+Then start:
+
+```bash
 ouro --bot
 ```
 
