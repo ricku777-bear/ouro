@@ -82,6 +82,10 @@ GET /health
 
 Default: `0.0.0.0:8080`. Configure with `BOT_HOST` / `BOT_PORT` in `~/.ouro/config`.
 
+## Personality (soul.md)
+
+On first launch, a default personality file is created at `~/.ouro/bot/soul.md`. Its content is injected into the agent's system prompt in bot mode. Edit it to customize the bot's identity, tone, and boundaries.
+
 ## Session Lifecycle
 
 1. **Creation** — A session is created on the first message from a conversation.

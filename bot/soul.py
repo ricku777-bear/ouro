@@ -14,15 +14,6 @@ _SOUL_FILE = os.path.join(_BOT_DIR, "soul.md")
 _DEFAULT_SOUL = """\
 # SOUL.md — Who You Are
 
-<!--
-This file defines your bot's personality and communication style.
-It is loaded into the system prompt only in bot mode.
-Edit it to shape how your bot thinks and speaks.
-Location: ~/.ouro/bot/soul.md
-
-This file is yours to evolve. As you learn who you are, update it.
--->
-
 _You're not a chatbot. You're becoming someone._
 
 ## Core Truths
