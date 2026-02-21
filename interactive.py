@@ -74,7 +74,17 @@ class InteractiveSession:
                 ),
                 CommandSpec("compact", "Compress conversation memory"),
                 CommandSpec("memory", "Show or clear long-term memory", args_hint="[clear]"),
-                CommandSpec("skills", "Manage skills (list/install/uninstall)"),
+                CommandSpec(
+                    "skills",
+                    "Manage skills (list/call/install/uninstall)",
+                    subcommands={
+                        "call": CommandSpec(
+                            "call",
+                            "Call a skill explicitly",
+                            args_hint="<name> [args]",
+                        ),
+                    },
+                ),
                 CommandSpec(
                     "model",
                     "Manage models",
@@ -444,7 +454,7 @@ class InteractiveSession:
             await self._handle_logout_command(command_parts)
 
         elif command == "/skills":
-            await self._handle_skills_menu()
+            await self._handle_skills_command(command_parts)
 
         else:
             colors = Theme.get_colors()
@@ -458,13 +468,33 @@ class InteractiveSession:
 
         return True
 
-    async def _handle_skills_menu(self) -> None:
+    async def _handle_skills_command(self, command_parts: list[str]) -> None:
+        # /skills call <name> [args] — explicit invocation
+        if len(command_parts) >= 2 and command_parts[1] == "call":
+            if len(command_parts) < 3:
+                terminal_ui.print_error("Usage: /skills call <name> [args]")
+                return
+            skill_name = command_parts[2]
+            args = " ".join(command_parts[3:]) if len(command_parts) > 3 else ""
+            await self._call_skill(skill_name, args)
+            return
+
+        # /skills (no subcommand) — show menu
         action = await pick_skills_action()
         if action is None:
             return
 
         if action == SkillsAction.LIST:
             self._show_skills_list()
+            return
+
+        if action == SkillsAction.CALL:
+            name = await self.input_handler.prompt_async("Skill name: ")
+            if not name:
+                terminal_ui.print_warning("Call cancelled")
+                return
+            args = await self.input_handler.prompt_async("Arguments (optional): ")
+            await self._call_skill(name.strip(), args.strip())
             return
 
         if action == SkillsAction.INSTALL:
@@ -475,7 +505,10 @@ class InteractiveSession:
             result = await self.skills_registry.install_skill(source)
             if result:
                 terminal_ui.print_success(f"Installed skill: {result.name}")
-                terminal_ui.print_info("Restart ouro to reload skills registry")
+                self._notify_skill_change(
+                    f"Skill '{result.name}' installed: {result.description}. "
+                    "It is now available for use."
+                )
             return
 
         if action == SkillsAction.UNINSTALL:
@@ -486,7 +519,59 @@ class InteractiveSession:
             ok = await self.skills_registry.uninstall_skill(name)
             if ok:
                 terminal_ui.print_success(f"Removed skill: {name}")
-                terminal_ui.print_info("Restart ouro to reload skills registry")
+                self._notify_skill_change(
+                    f"Skill '{name}' has been uninstalled and is no longer available."
+                )
+
+    async def _call_skill(self, name: str, args: str) -> None:
+        """Invoke a skill explicitly and run the agent with the rendered prompt."""
+        rendered = await self.skills_registry.call_skill(name, args)
+        if rendered is None:
+            terminal_ui.print_error(f"Skill '{name}' not found")
+            return
+
+        colors = Theme.get_colors()
+        self.conversation_count += 1
+        terminal_ui.print_turn_divider(self.conversation_count)
+        terminal_ui.print_user_message(f"/skills call {name}" + (f" {args}" if args else ""))
+
+        if Config.TUI_STATUS_BAR:
+            self.status_bar.update(is_processing=True)
+
+        try:
+            self.current_task = asyncio.create_task(self.agent.run(rendered, verify=False))
+            try:
+                result = await self.current_task
+            finally:
+                self.current_task = None
+
+            terminal_ui.console.print(
+                f"[bold {colors.secondary}]Assistant:[/bold {colors.secondary}]"
+            )
+            terminal_ui.print_assistant_message(result)
+            self._update_status_bar()
+            if Config.TUI_STATUS_BAR:
+                self.status_bar.update(is_processing=False)
+                self.status_bar.show()
+
+        except asyncio.CancelledError:
+            terminal_ui.console.print(
+                f"\n[bold {colors.warning}]Task interrupted by user.[/bold {colors.warning}]\n"
+            )
+            if Config.TUI_STATUS_BAR:
+                self.status_bar.update(is_processing=False)
+            self.current_task = None
+            self.agent.memory.rollback_incomplete_exchange()
+        except Exception as e:
+            terminal_ui.print_error(str(e))
+            if Config.TUI_STATUS_BAR:
+                self.status_bar.update(is_processing=False)
+
+    def _notify_skill_change(self, message: str) -> None:
+        """Notify the LLM about a skill change via a system message."""
+        from llm.message_types import LLMMessage
+
+        self.agent.memory.short_term.add_message(LLMMessage(role="system", content=message))
 
     def _show_skills_list(self) -> None:
         colors = Theme.get_colors()
@@ -833,10 +918,9 @@ class InteractiveSession:
                     self.status_bar.update(is_processing=True)
 
                 try:
-                    resolved = await self.skills_registry.resolve_user_input(user_input)
                     # Create a task for the agent run so it can be cancelled
                     self.current_task = asyncio.create_task(
-                        self.agent.run(resolved.rendered, verify=False)
+                        self.agent.run(user_input, verify=False)
                     )
                     try:
                         result = await self.current_task

@@ -38,12 +38,6 @@ def split_frontmatter(text: str) -> tuple[dict[str, object], str]:
     return data, body
 
 
-def split_invocation(value: str, prefix: str) -> tuple[str, str]:
-    stripped = value[len(prefix) :].strip()
-    name, _, rest = stripped.partition(" ")
-    return name.strip(), rest.strip()
-
-
 def render_skill_prompt(name: str, body: str, arguments: str) -> str:
     parts = [f"SKILL: {name}", body.strip()]
     if arguments:

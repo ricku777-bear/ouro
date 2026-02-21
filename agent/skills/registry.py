@@ -21,12 +21,11 @@ from .parser import (
     read_text,
     render_skill_prompt,
     split_frontmatter,
-    split_invocation,
 )
-from .types import ResolvedInput, SkillInfo
+from .types import SkillInfo
 
-# System skills are bundled with ouro
-SYSTEM_SKILLS_DIR = Path(__file__).parent / "system"
+# Bundled skills shipped with ouro (source for seeding only)
+BUNDLED_SKILLS_DIR = Path(__file__).parent / "system"
 
 
 class SkillsRegistry:
@@ -36,14 +35,23 @@ class SkillsRegistry:
         self.skills: dict[str, SkillInfo] = {}
 
     async def load(self) -> None:
+        await self._bootstrap_bundled_skills()
         skills_dir = Path.home() / ".ouro" / "skills"
-        # Load user skills first, then system skills (user skills take precedence)
         self.skills = await self._load_skills(skills_dir)
-        system_skills = await self._load_skills(SYSTEM_SKILLS_DIR)
-        # Only add system skills that don't conflict with user skills
-        for name, skill in system_skills.items():
-            if name not in self.skills:
-                self.skills[name] = skill
+
+    async def _bootstrap_bundled_skills(self) -> None:
+        """Copy bundled skills to ~/.ouro/skills/ if not already present."""
+        user_skills_dir = Path.home() / ".ouro" / "skills"
+        if not await aiofiles.os.path.exists(BUNDLED_SKILLS_DIR):
+            return
+        for skill_file in await list_skill_files(BUNDLED_SKILLS_DIR):
+            skill_dir = skill_file.parent
+            name = skill_dir.name
+            dest = user_skills_dir / name
+            if await aiofiles.os.path.exists(dest):
+                continue  # User already has this skill — don't overwrite
+            await aiofiles.os.makedirs(dest.parent, exist_ok=True)
+            await copy_tree(skill_dir, dest)
 
     async def _load_skills(self, skills_dir: Path) -> dict[str, SkillInfo]:
         results: dict[str, SkillInfo] = {}
@@ -67,17 +75,21 @@ class SkillsRegistry:
         _, body = split_frontmatter(content)
         return body.strip()
 
-    async def resolve_user_input(self, user_input: str) -> ResolvedInput:
-        if user_input.startswith("$"):
-            name, args = split_invocation(user_input, "$")
-            skill = self.skills.get(name)
-            if not skill:
-                return ResolvedInput(user_input, user_input, None, args)
-            body = await self.load_skill_body(skill)
-            rendered = render_skill_prompt(skill.name, body, args)
-            return ResolvedInput(user_input, rendered, skill.name, args)
+    async def call_skill(self, name: str, args: str = "") -> str | None:
+        """Render a skill prompt for explicit invocation.
 
-        return ResolvedInput(user_input, user_input, None, "")
+        Args:
+            name: Skill name to invoke.
+            args: Optional arguments string.
+
+        Returns:
+            Rendered prompt string, or None if skill not found.
+        """
+        skill = self.skills.get(name)
+        if not skill:
+            return None
+        body = await self.load_skill_body(skill)
+        return render_skill_prompt(skill.name, body, args)
 
     async def install_skill(self, source: str) -> SkillInfo | None:
         source = source.strip()
@@ -86,10 +98,16 @@ class SkillsRegistry:
             return None
 
         if is_git_url(source):
-            return await self._install_from_git(source)
+            result = await self._install_from_git(source)
+        else:
+            path = Path(source).expanduser().resolve()
+            result = await self._install_from_path(path)
 
-        path = Path(source).expanduser().resolve()
-        return await self._install_from_path(path)
+        # Dynamic reload: add to registry immediately
+        if result is not None:
+            self.skills[result.name] = result
+
+        return result
 
     async def uninstall_skill(self, name: str) -> bool:
         name = name.strip()
@@ -101,6 +119,10 @@ class SkillsRegistry:
             terminal_ui.print_warning(f"Skill '{name}' not found in {target_dir}")
             return False
         await remove_tree(target_dir)
+
+        # Dynamic reload: remove from registry immediately
+        self.skills.pop(name, None)
+
         return True
 
     async def _install_from_path(self, path: Path) -> SkillInfo | None:
