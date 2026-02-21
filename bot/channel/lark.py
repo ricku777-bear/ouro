@@ -1,4 +1,4 @@
-"""Feishu/Lark WebSocket channel implementation for bot mode.
+"""Lark (Feishu) WebSocket channel implementation for bot mode.
 
 Uses ``lark-oapi`` SDK long connection (WebSocket).  The SDK's
 ``lark.ws.Client.start()`` is **blocking**, so we run it in a daemon thread
@@ -31,14 +31,14 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
-class FeishuChannel:
-    """Feishu/Lark channel backed by a WebSocket long connection."""
+class LarkChannel:
+    """Lark channel backed by a WebSocket long connection."""
 
-    name: str = "feishu"
+    name: str = "lark"
 
     def __init__(self) -> None:
-        self._app_id = Config.FEISHU_APP_ID
-        self._app_secret = Config.FEISHU_APP_SECRET
+        self._app_id = Config.LARK_APP_ID
+        self._app_secret = Config.LARK_APP_SECRET
 
         self._callback: MessageCallback | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -78,10 +78,10 @@ class FeishuChannel:
         self._thread = threading.Thread(
             target=self._run_ws,
             daemon=True,
-            name="feishu-ws",
+            name="lark-ws",
         )
         self._thread.start()
-        logger.info("Feishu WebSocket channel started")
+        logger.info("Lark WebSocket channel started")
 
     async def stop(self) -> None:
         """Shut down the WebSocket connection."""
@@ -90,10 +90,10 @@ class FeishuChannel:
         self._ws_client = None
         self._callback = None
         self._loop = None
-        logger.info("Feishu WebSocket channel stopped")
+        logger.info("Lark WebSocket channel stopped")
 
     async def send_message(self, message: OutgoingMessage) -> None:
-        """Send a text message to a Feishu chat (async-safe)."""
+        """Send a text message to a Lark chat (async-safe)."""
         await asyncio.to_thread(self._send_sync, message)
 
     # ------------------------------------------------------------------
@@ -140,7 +140,7 @@ class FeishuChannel:
             logger.debug("Ignoring message type: %s", msg_obj.message_type)
             return
 
-        # Parse text content (Feishu wraps it in JSON: {"text": "hello"}).
+        # Parse text content (Lark wraps it in JSON: {"text": "hello"}).
         try:
             content = json.loads(msg_obj.content or "{}")
             text = content.get("text", "")
@@ -177,7 +177,7 @@ class FeishuChannel:
         response = self._api_client.im.v1.message.create(request)
         if not response.success():
             logger.error(
-                "Failed to send Feishu message: code=%s msg=%s",
+                "Failed to send Lark message: code=%s msg=%s",
                 response.code,
                 response.msg,
             )

@@ -178,18 +178,18 @@ async def test_callback_triggers_process_message(fake_channel, mock_router):
 # ---------------------------------------------------------------------------
 
 
-def test_build_channels_feishu():
-    """_build_channels creates Feishu channel when configured and SDK available."""
-    mock_feishu_channel = MagicMock()
-    mock_feishu_channel.return_value.name = "feishu"
-    mock_feishu_mod = MagicMock(FeishuChannel=mock_feishu_channel)
+def test_build_channels_lark():
+    """_build_channels creates Lark channel when configured and SDK available."""
+    mock_lark_channel = MagicMock()
+    mock_lark_channel.return_value.name = "lark"
+    mock_lark_mod = MagicMock(LarkChannel=mock_lark_channel)
 
     with (
         patch("bot.server.Config") as mock_config,
-        patch.dict("sys.modules", {"bot.channel.feishu": mock_feishu_mod}),
+        patch.dict("sys.modules", {"bot.channel.lark": mock_lark_mod}),
     ):
-        mock_config.FEISHU_APP_ID = "test_id"
-        mock_config.FEISHU_APP_SECRET = "test_secret"
+        mock_config.LARK_APP_ID = "test_id"
+        mock_config.LARK_APP_SECRET = "test_secret"
         mock_config.SLACK_BOT_TOKEN = ""
         mock_config.SLACK_APP_TOKEN = ""
 
@@ -202,8 +202,8 @@ def test_build_channels_feishu():
 def test_build_channels_empty():
     """_build_channels returns empty when nothing configured."""
     with patch("bot.server.Config") as mock_config:
-        mock_config.FEISHU_APP_ID = ""
-        mock_config.FEISHU_APP_SECRET = ""
+        mock_config.LARK_APP_ID = ""
+        mock_config.LARK_APP_SECRET = ""
         mock_config.SLACK_BOT_TOKEN = ""
         mock_config.SLACK_APP_TOKEN = ""
 

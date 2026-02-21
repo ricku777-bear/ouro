@@ -6,18 +6,18 @@
 
 ## Summary
 
-Add a persistent **bot mode** (`ouro --bot`) that connects to IM platforms via **long-lived outbound connections** (Feishu WebSocket, Slack Socket Mode). No public URL or webhook endpoint needed — the bot initiates all connections, making it practical for local Mac development and private deployments.
+Add a persistent **bot mode** (`ouro --bot`) that connects to IM platforms via **long-lived outbound connections** (Lark WebSocket, Slack Socket Mode). No public URL or webhook endpoint needed — the bot initiates all connections, making it practical for local Mac development and private deployments.
 
 ## Problem
 
 ouro is currently CLI-only: interactive TUI or single-shot `--task`. Users who want to interact with ouro from their phone, or have it running as a persistent service they can message anytime, have no supported path. Running `ouro --task` in a loop is brittle and loses conversation context.
 
-**Example**: A user wants to ask ouro questions throughout the day from their Feishu or Slack chat — researching topics, running code tasks, getting summaries — without needing a terminal open or a public URL.
+**Example**: A user wants to ask ouro questions throughout the day from their Lark or Slack chat — researching topics, running code tasks, getting summaries — without needing a terminal open or a public URL.
 
 ## Goals
 
 - `ouro --bot` starts a persistent process that connects to IM platforms
-- **Feishu/Lark** channel via `lark-oapi` WebSocket SDK (MVP)
+- **Lark** channel via `lark-oapi` WebSocket SDK (MVP)
 - **Slack** channel via `slack-sdk` Socket Mode (MVP)
 - No public URL, ngrok, or webhook configuration required
 - Per-conversation session routing (each IM chat gets its own agent with memory)
@@ -52,9 +52,9 @@ BOT_PORT=8080
 ### Environment variables (for secrets)
 
 ```
-# Feishu/Lark (WebSocket long connection)
-OURO_FEISHU_APP_ID=cli_xxx
-OURO_FEISHU_APP_SECRET=xxx
+# Lark (WebSocket long connection)
+OURO_LARK_APP_ID=cli_xxx
+OURO_LARK_APP_SECRET=xxx
 
 # Slack (Socket Mode)
 OURO_SLACK_BOT_TOKEN=xoxb-xxx      # Bot User OAuth Token
@@ -67,21 +67,21 @@ OURO_SLACK_APP_TOKEN=xapp-xxx      # App-Level Token (connections:write)
 - Each message processing logs conversation ID + timing
 - Agent output suppressed (quiet mode) — only sent to IM channel
 
-### Message flow (Feishu)
+### Message flow (Lark)
 
-1. `ouro --bot` starts → `lark.ws.Client` opens WebSocket to Feishu servers
-2. User sends message in Feishu chat
-3. Feishu pushes event over WebSocket → SDK dispatches to handler
-4. Handler bridges to asyncio event loop → callback processes message
-5. Send "Working on it..." → run agent → send result via Feishu API
+1. `ouro --bot` starts -> `lark.ws.Client` opens WebSocket to Lark servers
+2. User sends message in Lark chat
+3. Lark pushes event over WebSocket -> SDK dispatches to handler
+4. Handler bridges to asyncio event loop -> callback processes message
+5. Send "Working on it..." -> run agent -> send result via Lark API
 
 ### Message flow (Slack)
 
-1. `ouro --bot` starts → `AsyncSocketModeClient` opens WebSocket to Slack
+1. `ouro --bot` starts -> `AsyncSocketModeClient` opens WebSocket to Slack
 2. User sends message in Slack
-3. Slack pushes event over Socket Mode → client receives `SocketModeRequest`
-4. Ack immediately → callback processes message
-5. Send "Working on it..." → run agent → send result via `chat.postMessage`
+3. Slack pushes event over Socket Mode -> client receives `SocketModeRequest`
+4. Ack immediately -> callback processes message
+5. Send "Working on it..." -> run agent -> send result via `chat.postMessage`
 
 ## Invariants (Must Not Regress)
 
@@ -99,11 +99,11 @@ OURO_SLACK_APP_TOKEN=xapp-xxx      # App-Level Token (connections:write)
 bot/
     __init__.py
     server.py              # Channel lifecycle + health endpoint
-    session_router.py      # conversation → agent mapping
+    session_router.py      # conversation -> agent mapping
     channel/
         __init__.py
         base.py            # Channel protocol + message dataclasses
-        feishu.py          # Feishu WebSocket (lark-oapi SDK)
+        lark.py            # Lark WebSocket (lark-oapi SDK)
         slack.py           # Slack Socket Mode (slack-sdk)
 ```
 
@@ -128,20 +128,20 @@ Each channel owns its own connection lifecycle. `start()` begins receiving messa
 ### Server flow
 
 - `start()`: launch each channel via `channel.start(callback)`, start health server
-- Callback: lock → ack → `agent.run()` → send result
+- Callback: lock -> ack -> `agent.run()` -> send result
 - `GET /health`: returns `{"status": "ok"}`
 - Shutdown: `channel.stop()` for all channels
 
 ### Channel details
 
-**Feishu WebSocket** (`lark-oapi`):
-- `lark.ws.Client.start()` is blocking → run in daemon thread
-- Handler runs in SDK thread → `asyncio.run_coroutine_threadsafe()` to bridge to event loop
-- `lark.Client` for sending messages (sync SDK → `asyncio.to_thread()`)
+**Lark WebSocket** (`lark-oapi`):
+- `lark.ws.Client.start()` is blocking -> run in daemon thread
+- Handler runs in SDK thread -> `asyncio.run_coroutine_threadsafe()` to bridge to event loop
+- `lark.Client` for sending messages (sync SDK -> `asyncio.to_thread()`)
 - SDK handles token refresh, reconnection, and deduplication automatically
 
 **Slack Socket Mode** (`slack-sdk`):
-- `AsyncSocketModeClient` with aiohttp backend — natively async
+- `AsyncSocketModeClient` with aiohttp backend -- natively async
 - Ack each `SocketModeRequest` immediately via `SocketModeResponse`
 - Filter: only `events_api` / `message` events, skip bot messages and edits
 - Dedup by `client_msg_id` with bounded dict
@@ -157,7 +157,7 @@ Each channel owns its own connection lifecycle. `start()` begins receiving messa
 
 - Unit tests:
   - `test/test_bot_session_router.py`: session creation, lock serialization, idle cleanup (unchanged)
-  - `test/test_feishu_channel.py`: WS handler, send_message, thread→asyncio bridge
+  - `test/test_lark_channel.py`: WS handler, send_message, thread->asyncio bridge
   - `test/test_slack_channel.py`: event parsing, bot filtering, dedup, ack, send
   - `test/test_bot_server.py`: FakeChannel lifecycle, callback wiring, health endpoint
 - Targeted tests to run locally: `./scripts/dev.sh test -q`
@@ -166,20 +166,17 @@ Each channel owns its own connection lifecycle. `start()` begins receiving messa
 ## Rollout / Migration
 
 - Backward compatibility: fully additive, no breaking changes
-- `lark-oapi` and `slack-sdk` are optional dependencies:
-  - `pip install ouro-ai[bot-feishu]` for Feishu
-  - `pip install ouro-ai[bot-slack]` for Slack
-  - `pip install ouro-ai[bot-all]` for both
+- `lark-oapi` and `slack-sdk` are optional dependencies: `pip install ouro-ai[bot]`
 - No migration needed for existing users
 
 ## Risks & Mitigations
 
 - **Long-running agent blocks conversation**: Mitigated by per-conversation lock + immediate ack.
 - **Memory leak from abandoned sessions**: Mitigated by idle session cleanup with configurable timeout.
-- **Feishu WebSocket disconnection**: Mitigated by lark-oapi SDK auto-reconnection.
+- **Lark WebSocket disconnection**: Mitigated by lark-oapi SDK auto-reconnection.
 - **Slack Socket Mode disconnection**: Mitigated by slack-sdk auto-reconnection.
-- **Thread safety (Feishu)**: SDK callback runs in SDK thread; bridged to asyncio event loop via `run_coroutine_threadsafe()`.
-- **Secrets in config**: Mitigated by using environment variables (`OURO_FEISHU_*`, `OURO_SLACK_*`) as primary source.
+- **Thread safety (Lark)**: SDK callback runs in SDK thread; bridged to asyncio event loop via `run_coroutine_threadsafe()`.
+- **Secrets in config**: Mitigated by using environment variables (`OURO_LARK_*`, `OURO_SLACK_*`) as primary source.
 
 ## Open Questions
 

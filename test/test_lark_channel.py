@@ -1,4 +1,4 @@
-"""Tests for the Feishu WebSocket channel implementation."""
+"""Tests for the Lark WebSocket channel implementation."""
 
 from __future__ import annotations
 
@@ -45,13 +45,13 @@ def _make_sdk_event(
 
 
 # ---------------------------------------------------------------------------
-# Fixture: import FeishuChannel with lark_oapi mocked out
+# Fixture: import LarkChannel with lark_oapi mocked out
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def _mock_lark():
-    """Patch lark_oapi so FeishuChannel can be imported without the real SDK."""
+    """Patch lark_oapi so LarkChannel can be imported without the real SDK."""
     mock_lark = MagicMock()
     # lark.Client.builder().app_id().app_secret().build()
     builder = MagicMock()
@@ -76,23 +76,23 @@ def _mock_lark():
         patch.dict("sys.modules", {"lark_oapi": mock_lark, "lark_oapi.api.im.v1": MagicMock()}),
         patch("config.Config") as mock_config,
     ):
-        mock_config.FEISHU_APP_ID = "test_app_id"
-        mock_config.FEISHU_APP_SECRET = "test_app_secret"
+        mock_config.LARK_APP_ID = "test_app_id"
+        mock_config.LARK_APP_SECRET = "test_app_secret"
 
         # Re-import so the patched modules are used.
         import importlib
 
-        import bot.channel.feishu as feishu_mod
+        import bot.channel.lark as lark_mod
 
-        importlib.reload(feishu_mod)
+        importlib.reload(lark_mod)
 
-        yield feishu_mod, mock_lark
+        yield lark_mod, mock_lark
 
 
 @pytest.fixture
 def channel(_mock_lark):
-    feishu_mod, _ = _mock_lark
-    return feishu_mod.FeishuChannel()
+    lark_mod, _ = _mock_lark
+    return lark_mod.LarkChannel()
 
 
 # ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ async def test_on_message_dispatches_text(channel):
 
     assert len(received) == 1
     assert received[0].text == "hello world"
-    assert received[0].channel == "feishu"
+    assert received[0].channel == "lark"
     assert received[0].conversation_id == "oc_1"
     assert received[0].user_id == "u1"
     assert received[0].message_id == "m1"
@@ -183,7 +183,7 @@ async def test_send_message_calls_api(channel):
     channel._send_sync = MagicMock()
 
     msg = OutgoingMessage(conversation_id="oc_1", text="hi")
-    with patch("bot.channel.feishu.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+    with patch("bot.channel.lark.asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         await channel.send_message(msg)
         mock_to_thread.assert_called_once_with(channel._send_sync, msg)
 
@@ -198,7 +198,7 @@ async def test_start_spawns_thread(channel, _mock_lark):
     _, mock_lark = _mock_lark
 
     cb = AsyncMock()
-    with patch("bot.channel.feishu.threading.Thread") as MockThread:
+    with patch("bot.channel.lark.threading.Thread") as MockThread:
         mock_thread_instance = MagicMock()
         MockThread.return_value = mock_thread_instance
 

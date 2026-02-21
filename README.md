@@ -121,6 +121,34 @@ ouro --resume a1b2c3d4
 | `Ctrl+T` | Toggle thinking display |
 | `Ctrl+S` | Show quick stats |
 | Up/Down | Navigate command history |
+## Bot Mode (IM Assistant)
+
+Run ouro as a persistent IM bot — message it from Lark or Slack, get agent responses. No public URL needed; the bot uses outbound long connections (WebSocket / Socket Mode).
+
+### Install
+
+```bash
+pip install ouro-ai[bot]
+```
+
+### Quick Start
+
+```bash
+# Lark
+export OURO_LARK_APP_ID="cli_xxx"
+export OURO_LARK_APP_SECRET="xxx"
+ouro --bot
+
+# Slack
+export OURO_SLACK_BOT_TOKEN="xoxb-xxx"
+export OURO_SLACK_APP_TOKEN="xapp-xxx"
+ouro --bot
+```
+
+Platform setup guides:
+- [Lark (Feishu) Setup](bot/LARK.md)
+- [Slack Setup](bot/SLACK.md)
+
 ## Features
 
 - **Unified agent loop**: Think-Act-Observe cycle — planning, sub-agents, and tool use all happen in one loop, chosen autonomously by the agent

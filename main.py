@@ -220,7 +220,7 @@ def main():
         "--bot",
         action="store_true",
         default=False,
-        help="Start as a bot server, receiving messages via IM channels (Feishu, Slack, etc.)",
+        help="Start as a bot server, receiving messages via IM channels (Lark, Slack, etc.)",
     )
 
     args = parser.parse_args()

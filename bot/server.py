@@ -149,20 +149,20 @@ def _build_channels() -> list[Channel]:
     """Build channel instances from config, lazy-importing SDKs."""
     channels: list[Channel] = []
 
-    # Feishu channel
-    if Config.FEISHU_APP_ID and Config.FEISHU_APP_SECRET:
+    # Lark channel
+    if Config.LARK_APP_ID and Config.LARK_APP_SECRET:
         try:
-            from bot.channel.feishu import FeishuChannel
+            from bot.channel.lark import LarkChannel
 
-            channels.append(FeishuChannel())
-            logger.info("Feishu channel enabled")
+            channels.append(LarkChannel())
+            logger.info("Lark channel enabled")
         except ImportError:
             logger.warning(
-                "Feishu credentials configured but lark-oapi not installed. "
-                "Install with: pip install ouro-ai[bot-feishu]"
+                "Lark credentials configured but lark-oapi not installed. "
+                "Install with: pip install ouro-ai[bot]"
             )
     else:
-        logger.info("Feishu channel disabled (FEISHU_APP_ID / FEISHU_APP_SECRET not set)")
+        logger.info("Lark channel disabled (LARK_APP_ID / LARK_APP_SECRET not set)")
 
     # Slack channel
     if Config.SLACK_BOT_TOKEN and Config.SLACK_APP_TOKEN:
@@ -174,7 +174,7 @@ def _build_channels() -> list[Channel]:
         except ImportError:
             logger.warning(
                 "Slack tokens configured but slack-sdk not installed. "
-                "Install with: pip install ouro-ai[bot-slack]"
+                "Install with: pip install ouro-ai[bot]"
             )
     else:
         logger.info("Slack channel disabled (SLACK_BOT_TOKEN / SLACK_APP_TOKEN not set)")
@@ -193,7 +193,7 @@ async def run_bot(model_id: str | None = None) -> None:
     channels = _build_channels()
     if not channels:
         print(
-            "No IM channels configured. Set OURO_FEISHU_APP_ID/OURO_FEISHU_APP_SECRET "
+            "No IM channels configured. Set OURO_LARK_APP_ID/OURO_LARK_APP_SECRET "
             "or OURO_SLACK_BOT_TOKEN/OURO_SLACK_APP_TOKEN to enable a channel.",
             file=sys.stderr,
         )

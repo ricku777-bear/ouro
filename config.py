@@ -122,11 +122,9 @@ class Config:
     BOT_HOST = _cfg.get("BOT_HOST", "0.0.0.0")
     BOT_PORT = int(_cfg.get("BOT_PORT", "8080"))
 
-    # Feishu/Lark Channel (env vars take precedence over config file)
-    FEISHU_APP_ID = os.environ.get("OURO_FEISHU_APP_ID") or _cfg.get("FEISHU_APP_ID", "")
-    FEISHU_APP_SECRET = os.environ.get("OURO_FEISHU_APP_SECRET") or _cfg.get(
-        "FEISHU_APP_SECRET", ""
-    )
+    # Lark Channel (env vars take precedence over config file)
+    LARK_APP_ID = os.environ.get("OURO_LARK_APP_ID") or _cfg.get("LARK_APP_ID", "")
+    LARK_APP_SECRET = os.environ.get("OURO_LARK_APP_SECRET") or _cfg.get("LARK_APP_SECRET", "")
 
     # Slack Channel (env vars take precedence over config file)
     SLACK_BOT_TOKEN = os.environ.get("OURO_SLACK_BOT_TOKEN") or _cfg.get("SLACK_BOT_TOKEN", "")
