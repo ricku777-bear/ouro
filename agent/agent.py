@@ -119,10 +119,13 @@ AGENTS.md is optional. If not found, proceed normally.
             if self._soul_section:
                 system_content = (
                     system_content
-                    + "\n\n# Soul\n\n"
-                    + "If the following soul section is present, embody its persona and tone. "
-                    + "Follow its guidance unless higher-priority instructions override it.\n\n"
+                    + "\n\n<soul>\n"
                     + self._soul_section
+                    + "\n</soul>\n\n"
+                    + "<soul_instructions>\n"
+                    + "Embody the persona and tone defined in the <soul> section above. "
+                    + "Follow its guidance unless higher-priority instructions override it.\n"
+                    + "</soul_instructions>"
                 )
 
             # Add system message only on first turn
