@@ -140,6 +140,26 @@ class TaskBoardTool(BaseTool):
                 "description": "Dependency task ids",
                 "items": {"type": "string"},
             },
+            "add_blocked_by": {
+                "type": "array",
+                "description": "Incrementally add dependency ids (Claude: addBlockedBy)",
+                "items": {"type": "string"},
+            },
+            "remove_blocked_by": {
+                "type": "array",
+                "description": "Incrementally remove dependency ids (Claude: removeBlockedBy)",
+                "items": {"type": "string"},
+            },
+            "add_blocks": {
+                "type": "array",
+                "description": "Incrementally add reverse edges: tasks that this task blocks (Claude: addBlocks)",
+                "items": {"type": "string"},
+            },
+            "remove_blocks": {
+                "type": "array",
+                "description": "Incrementally remove reverse edges: tasks that this task blocks (Claude: removeBlocks)",
+                "items": {"type": "string"},
+            },
             "status": {
                 "type": "string",
                 "description": "pending|in_progress|completed|failed|deleted",
