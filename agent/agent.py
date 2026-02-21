@@ -120,12 +120,10 @@ AGENTS.md is optional. If not found, proceed normally.
                 system_content = (
                     system_content
                     + "\n\n<soul>\n"
+                    + "Embody the persona and tone defined below. "
+                    + "Follow its guidance unless higher-priority instructions override it.\n\n"
                     + self._soul_section
-                    + "\n</soul>\n\n"
-                    + "<soul_instructions>\n"
-                    + "Embody the persona and tone defined in the <soul> section above. "
-                    + "Follow its guidance unless higher-priority instructions override it.\n"
-                    + "</soul_instructions>"
+                    + "\n</soul>"
                 )
 
             # Add system message only on first turn
