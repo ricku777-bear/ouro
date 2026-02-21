@@ -76,7 +76,7 @@ class InteractiveSession:
                 CommandSpec("memory", "Show or clear long-term memory", args_hint="[clear]"),
                 CommandSpec(
                     "skills",
-                    "Manage skills (list/call/install/uninstall)",
+                    "Manage skills (list/call)",
                     subcommands={
                         "call": CommandSpec(
                             "call",
