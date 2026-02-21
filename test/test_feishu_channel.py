@@ -194,7 +194,7 @@ async def test_send_message_calls_api(channel):
 
 
 async def test_start_spawns_thread(channel, _mock_lark):
-    """start() should create a daemon thread running ws_client.start."""
+    """start() should create a daemon thread running _run_ws."""
     _, mock_lark = _mock_lark
 
     cb = AsyncMock()
@@ -205,7 +205,9 @@ async def test_start_spawns_thread(channel, _mock_lark):
         await channel.start(cb)
 
         MockThread.assert_called_once()
-        assert MockThread.call_args[1]["daemon"] is True
+        call_kwargs = MockThread.call_args[1]
+        assert call_kwargs["daemon"] is True
+        assert call_kwargs["target"] == channel._run_ws
         mock_thread_instance.start.assert_called_once()
 
     assert channel._callback is cb

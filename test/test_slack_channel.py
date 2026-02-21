@@ -8,7 +8,6 @@ import pytest
 
 from bot.channel.base import IncomingMessage, OutgoingMessage
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

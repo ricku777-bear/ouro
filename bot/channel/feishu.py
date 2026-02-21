@@ -73,9 +73,10 @@ class FeishuChannel:
             log_level=lark.LogLevel.WARNING,
         )
 
-        # lark.ws.Client.start() blocks — run in a daemon thread.
+        # lark.ws.Client.start() blocks and internally calls
+        # loop.run_until_complete(), so it needs its own event loop.
         self._thread = threading.Thread(
-            target=self._ws_client.start,
+            target=self._run_ws,
             daemon=True,
             name="feishu-ws",
         )
@@ -98,6 +99,16 @@ class FeishuChannel:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _run_ws(self) -> None:
+        """Thread target: create a fresh event loop for the SDK."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            if self._ws_client is not None:
+                self._ws_client.start()
+        finally:
+            loop.close()
 
     def _on_message(self, data: P2ImMessageReceiveV1) -> None:
         """SDK callback — runs in the SDK/WS thread."""
