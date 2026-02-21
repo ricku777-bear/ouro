@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 _CLEANUP_INTERVAL = 300.0
 
 
+def _format_duration(seconds: float) -> str:
+    """Format a duration in seconds to a human-readable string."""
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s"
+    h, remainder = divmod(s, 3600)
+    m = remainder // 60
+    return f"{h}h {m}m"
+
+
 class BotServer:
     """Manages long-connection channels and routes messages to agents."""
 
@@ -44,9 +56,122 @@ class BotServer:
             }
         )
 
+    # ---- Slash commands -------------------------------------------------------
+
+    _HELP_TEXT = (
+        "Available commands:\n"
+        "  /new     — Start a fresh conversation (reset session)\n"
+        "  /reset   — Alias for /new\n"
+        "  /compact — Compress conversation memory to save tokens\n"
+        "  /status  — Show session statistics\n"
+        "  /help    — Show this message"
+    )
+
+    async def _handle_command(
+        self,
+        channel: Channel,
+        msg: IncomingMessage,
+    ) -> bool:
+        """Handle slash commands. Returns True if the message was a command."""
+        text = msg.text.strip()
+        if not text.startswith("/"):
+            return False
+
+        cmd = text.split()[0].lower()
+
+        if cmd in ("/new", "/reset"):
+            self._router.reset_session(msg.channel, msg.conversation_id)
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="Session reset. Send a message to start a new conversation.",
+                )
+            )
+            return True
+
+        if cmd == "/compact":
+            agent = self._router.get_or_create_agent(msg.channel, msg.conversation_id)
+            try:
+                result = await agent.memory.compress()
+            except Exception:
+                logger.exception("Compression failed for %s:%s", msg.channel, msg.conversation_id)
+                await channel.send_message(
+                    OutgoingMessage(
+                        conversation_id=msg.conversation_id,
+                        text="Compression failed — please try again later.",
+                    )
+                )
+                return True
+
+            if result:
+                reply = (
+                    f"Compressed {result.original_message_count} messages — "
+                    f"saved {result.token_savings} tokens "
+                    f"({result.savings_percentage:.0f}%)"
+                )
+            else:
+                reply = "Nothing to compress."
+            await channel.send_message(
+                OutgoingMessage(conversation_id=msg.conversation_id, text=reply)
+            )
+            return True
+
+        if cmd == "/status":
+            # Try to get existing agent; don't create one just for /status
+            key = self._router._session_key(msg.channel, msg.conversation_id)
+            agent = self._router._sessions.get(key)
+            if agent is None:
+                await channel.send_message(
+                    OutgoingMessage(
+                        conversation_id=msg.conversation_id,
+                        text="No active session. Send a message to start one.",
+                    )
+                )
+                return True
+
+            stats = agent.memory.get_stats()
+            age = self._router.get_session_age(msg.channel, msg.conversation_id)
+            age_str = _format_duration(age) if age is not None else "unknown"
+
+            lines = [
+                f"Session age: {age_str}",
+                f"Messages: {stats['short_term_count']}",
+                f"Context tokens: {stats['current_tokens']}",
+                f"Total input tokens: {stats['total_input_tokens']}",
+                f"Total output tokens: {stats['total_output_tokens']}",
+                f"Compressions: {stats['compression_count']}",
+            ]
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="\n".join(lines),
+                )
+            )
+            return True
+
+        if cmd == "/help":
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text=self._HELP_TEXT,
+                )
+            )
+            return True
+
+        # Unknown /command — pass through to agent as a normal message
+        return False
+
+    # ---- Message processing ---------------------------------------------------
+
     async def _process_message(self, channel: Channel, msg: IncomingMessage) -> None:
-        """Process a message: lock -> ack -> agent.run -> send result."""
+        """Process a message: command check -> lock -> ack -> agent.run -> send result."""
         try:
+            # Fast path: slash commands that don't need the agent lock
+            # (/new, /help are stateless; /compact and /status acquire no external lock
+            #  but are safe because they only read/mutate their own session.)
+            if await self._handle_command(channel, msg):
+                return
+
             agent = self._router.get_or_create_agent(msg.channel, msg.conversation_id)
             lock = self._router.get_lock(msg.channel, msg.conversation_id)
 

@@ -211,3 +211,149 @@ def test_build_channels_empty():
 
         channels = _build_channels()
         assert len(channels) == 0
+
+
+# ---------------------------------------------------------------------------
+# Slash command tests
+# ---------------------------------------------------------------------------
+
+
+def _make_msg(text: str, conv: str = "conv_cmd") -> IncomingMessage:
+    """Helper: build an IncomingMessage with the given text."""
+    return IncomingMessage(
+        channel="test",
+        conversation_id=conv,
+        user_id="user_1",
+        text=text,
+        message_id="msg_cmd",
+    )
+
+
+async def test_command_new_resets_session(bot_server, fake_channel, mock_router):
+    """'/new' destroys the current session and replies with confirmation."""
+    # Create a session first
+    mock_router.get_or_create_agent("test", "conv_cmd")
+    assert mock_router.active_session_count == 1
+
+    await bot_server._process_message(fake_channel, _make_msg("/new"))
+
+    assert mock_router.active_session_count == 0
+    assert len(fake_channel.sent_messages) == 1
+    assert "Session reset" in fake_channel.sent_messages[0].text
+
+
+async def test_command_reset_alias(bot_server, fake_channel, mock_router):
+    """'/reset' works the same as '/new'."""
+    mock_router.get_or_create_agent("test", "conv_cmd")
+
+    await bot_server._process_message(fake_channel, _make_msg("/reset"))
+
+    assert mock_router.active_session_count == 0
+    assert "Session reset" in fake_channel.sent_messages[0].text
+
+
+async def test_command_compact(bot_server, fake_channel, mock_router):
+    """'/compact' calls agent.memory.compress() and reports savings."""
+    mock_result = MagicMock()
+    mock_result.original_message_count = 20
+    mock_result.token_savings = 1500
+    mock_result.savings_percentage = 45.0
+
+    agent = mock_router.get_or_create_agent("test", "conv_cmd")
+    agent.memory.compress = AsyncMock(return_value=mock_result)
+
+    await bot_server._process_message(fake_channel, _make_msg("/compact"))
+
+    agent.memory.compress.assert_awaited_once()
+    assert len(fake_channel.sent_messages) == 1
+    reply = fake_channel.sent_messages[0].text
+    assert "20 messages" in reply
+    assert "1500 tokens" in reply
+    assert "45%" in reply
+
+
+async def test_command_compact_nothing_to_compress(bot_server, fake_channel, mock_router):
+    """'/compact' with nothing to compress returns appropriate message."""
+    agent = mock_router.get_or_create_agent("test", "conv_cmd")
+    agent.memory.compress = AsyncMock(return_value=None)
+
+    await bot_server._process_message(fake_channel, _make_msg("/compact"))
+
+    assert "Nothing to compress" in fake_channel.sent_messages[0].text
+
+
+async def test_command_status(bot_server, fake_channel, mock_router):
+    """'/status' returns session statistics."""
+    agent = mock_router.get_or_create_agent("test", "conv_cmd")
+    agent.memory.get_stats.return_value = {
+        "current_tokens": 5000,
+        "total_input_tokens": 12000,
+        "total_output_tokens": 3000,
+        "compression_count": 1,
+        "short_term_count": 15,
+    }
+
+    await bot_server._process_message(fake_channel, _make_msg("/status"))
+
+    assert len(fake_channel.sent_messages) == 1
+    reply = fake_channel.sent_messages[0].text
+    assert "Messages: 15" in reply
+    assert "Context tokens: 5000" in reply
+    assert "Session age:" in reply
+
+
+async def test_command_status_no_session(bot_server, fake_channel):
+    """'/status' when no session exists returns helpful message."""
+    await bot_server._process_message(fake_channel, _make_msg("/status"))
+
+    assert len(fake_channel.sent_messages) == 1
+    assert "No active session" in fake_channel.sent_messages[0].text
+
+
+async def test_command_help(bot_server, fake_channel):
+    """'/help' lists available commands."""
+    await bot_server._process_message(fake_channel, _make_msg("/help"))
+
+    assert len(fake_channel.sent_messages) == 1
+    reply = fake_channel.sent_messages[0].text
+    assert "/new" in reply
+    assert "/compact" in reply
+    assert "/status" in reply
+    assert "/help" in reply
+
+
+async def test_non_command_passes_through(bot_server, fake_channel, mock_router):
+    """A regular message (no / prefix) goes to agent.run()."""
+    await bot_server._process_message(fake_channel, _make_msg("hello world"))
+
+    # Should see ack + agent response = 2 messages
+    assert len(fake_channel.sent_messages) == 2
+    assert fake_channel.sent_messages[0].text == "Working on it..."
+    assert fake_channel.sent_messages[1].text == "Agent response"
+
+
+async def test_unknown_command_passes_through(bot_server, fake_channel, mock_router):
+    """An unknown /command is forwarded to agent.run() as a regular message."""
+    await bot_server._process_message(fake_channel, _make_msg("/unknown_cmd"))
+
+    # Should see ack + agent response (command not handled)
+    assert len(fake_channel.sent_messages) == 2
+    assert fake_channel.sent_messages[0].text == "Working on it..."
+
+
+async def test_command_with_extra_args(bot_server, fake_channel, mock_router):
+    """'/new some_arg' still parses as /new command."""
+    mock_router.get_or_create_agent("test", "conv_cmd")
+
+    await bot_server._process_message(fake_channel, _make_msg("/new some extra text"))
+
+    assert "Session reset" in fake_channel.sent_messages[0].text
+
+
+async def test_command_case_insensitive(bot_server, fake_channel, mock_router):
+    """'/NEW' is treated as /new."""
+    mock_router.get_or_create_agent("test", "conv_cmd")
+
+    await bot_server._process_message(fake_channel, _make_msg("/NEW"))
+
+    assert "Session reset" in fake_channel.sent_messages[0].text

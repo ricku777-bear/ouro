@@ -105,3 +105,55 @@ async def test_lock_serializes_access():
     # Task 1 acquires the lock first, task 2 must wait
     await asyncio.gather(task(1, 0.05), task(2, 0.0))
     assert order == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# reset_session
+# ---------------------------------------------------------------------------
+
+
+def test_reset_session_destroys_agent():
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    router.get_or_create_agent("feishu", "chat_123")
+    assert router.active_session_count == 1
+
+    existed = router.reset_session("feishu", "chat_123")
+    assert existed is True
+    assert router.active_session_count == 0
+    # Lock should also be removed
+    key = router._session_key("feishu", "chat_123")
+    assert key not in router._locks
+    assert key not in router._last_active
+
+
+def test_reset_session_nonexistent():
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    existed = router.reset_session("feishu", "no_such_conv")
+    assert existed is False
+
+
+def test_reset_session_new_agent_after_reset():
+    """After reset, get_or_create_agent returns a fresh agent."""
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    agent_before = router.get_or_create_agent("feishu", "chat_123")
+    router.reset_session("feishu", "chat_123")
+    agent_after = router.get_or_create_agent("feishu", "chat_123")
+    assert agent_before is not agent_after
+
+
+# ---------------------------------------------------------------------------
+# get_session_age
+# ---------------------------------------------------------------------------
+
+
+def test_get_session_age_no_session():
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    assert router.get_session_age("feishu", "chat_123") is None
+
+
+def test_get_session_age_returns_positive():
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    router.get_or_create_agent("feishu", "chat_123")
+    age = router.get_session_age("feishu", "chat_123")
+    assert age is not None
+    assert age >= 0

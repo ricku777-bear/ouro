@@ -98,6 +98,25 @@ class SessionRouter:
 
         return len(expired_keys)
 
+    def reset_session(self, channel: str, conversation_id: str) -> bool:
+        """Destroy the session for a conversation. Returns True if a session existed."""
+        key = self._session_key(channel, conversation_id)
+        existed = key in self._sessions
+        self._sessions.pop(key, None)
+        self._locks.pop(key, None)
+        self._last_active.pop(key, None)
+        if existed:
+            logger.info("Session reset for %s", key)
+        return existed
+
+    def get_session_age(self, channel: str, conversation_id: str) -> float | None:
+        """Return seconds since the session was last active, or None if no session."""
+        key = self._session_key(channel, conversation_id)
+        ts = self._last_active.get(key)
+        if ts is None:
+            return None
+        return time.time() - ts
+
     @property
     def active_session_count(self) -> int:
         """Number of active sessions."""
