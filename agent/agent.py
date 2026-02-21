@@ -59,11 +59,9 @@ When you have enough information, provide your final answer directly without usi
 - Use read_file only when you need full contents (avoid reading multiple large files at once)
 - Use smart_edit for precise changes (fuzzy match, auto backup, diff preview)
 - Use write_file only for creating new files or complete rewrites
-- Use multi_task for parallelizable tasks
-- With multi_task, use dependencies only when needed; keep independent tasks dependency-free
-- For pure acceleration, do NOT force an extra comparison/synthesis step
-- Only run a second synthesis/comparison pass when the user explicitly asks for consolidated comparison, ranking, or summary
-- Use manage_todo_list to track progress for complex tasks
+- Prefer Tasks + sub_agent_batch for parallelizable work. Avoid multi_task (legacy) when Tasks tools are available.
+- Use TaskCreate/TaskUpdate/TaskList/TaskGet/TaskFanout/TaskDumpMd for task graphs (see each tool's description for the full contract).
+- Use manage_todo_list to track progress for complex tasks when Tasks are unnecessary.
 </tool_usage_guidelines>
 
 <agents_md>
@@ -74,6 +72,63 @@ AGENTS.md is optional. If not found, proceed normally.
 </agents_md>
 
 """
+
+    async def _task_incomplete_summary(self) -> str | None:
+        store = getattr(self, "task_store", None)
+        if store is None:
+            return None
+
+        try:
+            tasks = await store.list_tasks()
+        except Exception:
+            return None
+
+        if not tasks:
+            return None
+
+        incomplete = [t for t in tasks if getattr(t, "status", None) != "completed"]
+        if not incomplete:
+            return None
+
+        tasks_by_id = {t.id: t for t in tasks}
+        lines: list[str] = []
+        for t in incomplete:
+            blocked_by = list(getattr(t, "blocked_by", []) or [])
+            missing = []
+            for dep_id in blocked_by:
+                dep = tasks_by_id.get(dep_id)
+                if not dep or getattr(dep, "status", None) != "completed":
+                    missing.append(dep_id)
+            missing_txt = f" missingDeps={','.join(missing)}" if missing else ""
+            lines.append(f"- {t.id}: {t.status} :: {t.content}{missing_txt}")
+        return "\n".join(lines).rstrip()
+
+    async def _enforce_tasks_completed(self, *, tools: list, task: str, result: str) -> str:
+        """Prevent returning a final answer while Tasks remain incomplete.
+
+        This does not auto-complete tasks; it injects a user message instructing the model
+        to continue using Task* tools until the task graph reaches all-completed.
+        """
+        passes = 0
+        while passes < 3:
+            summary = await self._task_incomplete_summary()
+            if not summary:
+                return result
+            passes += 1
+            gate_msg = (
+                "You created Tasks but some are still incomplete. Continue by using the Task* tools "
+                "to complete ALL tasks, then provide the final answer. Incomplete tasks:\n"
+                f"{summary}"
+            )
+            await self.memory.add_message(LLMMessage(role="user", content=gate_msg))
+            result = await self._react_loop(
+                messages=[],
+                tools=tools,
+                use_memory=True,
+                save_to_memory=True,
+                task=task,
+            )
+        return result
 
     async def run(self, task: str, verify: bool = False) -> str:
         """Execute ReAct loop until task is complete.
@@ -154,6 +209,8 @@ AGENTS.md is optional. If not found, proceed normally.
                 save_to_memory=True,
                 task=task,
             )
+
+        result = await self._enforce_tasks_completed(tools=tools, task=task, result=result)
 
         self._print_memory_stats()
 

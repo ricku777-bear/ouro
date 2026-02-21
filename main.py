@@ -9,6 +9,7 @@ from rich.console import Console
 
 from agent.agent import LoopAgent
 from agent.skills import SkillsRegistry, render_skills_section
+from agent.tasks import TaskStore
 from config import Config
 from interactive import run_interactive_mode, run_model_setup_mode
 from llm import LiteLLMAdapter, ModelManager
@@ -27,6 +28,7 @@ from tools.file_ops import FileReadTool, FileWriteTool
 from tools.multi_task import MultiTaskTool
 from tools.shell import ShellTool
 from tools.smart_edit import SmartEditTool
+from tools.task_tools import TaskCreateTool, TaskGetTool, TaskListTool, TaskUpdateTool
 from tools.web_fetch import WebFetchTool
 from tools.web_search import WebSearchTool
 from utils import setup_logger, terminal_ui
@@ -51,6 +53,7 @@ def create_agent(
     Returns:
         Configured LoopAgent instance with all tools
     """
+    task_store = TaskStore()
     # Initialize base tools
     tools = [
         FileReadTool(),
@@ -61,6 +64,10 @@ def create_agent(
         GrepTool(),
         SmartEditTool(),
         ShellTool(),
+        TaskCreateTool(task_store),
+        TaskUpdateTool(task_store),
+        TaskListTool(task_store),
+        TaskGetTool(task_store),
     ]
 
     # Initialize model manager
