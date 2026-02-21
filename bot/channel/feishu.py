@@ -101,14 +101,25 @@ class FeishuChannel:
     # ------------------------------------------------------------------
 
     def _run_ws(self) -> None:
-        """Thread target: create a fresh event loop for the SDK."""
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        """Thread target: create a fresh event loop for the SDK.
+
+        The lark-oapi SDK captures ``asyncio.get_event_loop()`` into a
+        module-level ``loop`` variable at import time and uses it in
+        ``start()``.  When we're already inside an asyncio application the
+        captured loop is the *running* main-thread loop, so
+        ``loop.run_until_complete()`` fails.  We work around this by
+        replacing the module-level variable before calling ``start()``.
+        """
+        import lark_oapi.ws.client as _ws_mod
+
+        new_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(new_loop)
+        _ws_mod.loop = new_loop  # patch SDK's module-level loop
         try:
             if self._ws_client is not None:
                 self._ws_client.start()
         finally:
-            loop.close()
+            new_loop.close()
 
     def _on_message(self, data: P2ImMessageReceiveV1) -> None:
         """SDK callback — runs in the SDK/WS thread."""
