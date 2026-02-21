@@ -316,6 +316,9 @@ async def run_bot(model_id: str | None = None) -> None:
     from bot.soul import load_soul
     from main import create_agent
 
+    # Bot mode: enable long-term memory by default so conversations persist
+    Config.LONG_TERM_MEMORY_ENABLED = True
+
     channels = _build_channels()
     if not channels:
         print(
