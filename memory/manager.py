@@ -1,6 +1,7 @@
 """Core memory manager that orchestrates all memory operations."""
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
 import litellm
@@ -17,6 +18,23 @@ from .token_tracker import TokenTracker
 from .types import CompressedMemory, CompressionStrategy
 
 logger = logging.getLogger(__name__)
+
+_LTM_BLOCK_RE = re.compile(
+    r"<long_term_memories>\s*(.*?)\s*</long_term_memories>",
+    re.DOTALL,
+)
+
+
+def _strip_ltm_block(text: str) -> str:
+    """Remove ``<long_term_memories>...</long_term_memories>`` from *text*."""
+    return _LTM_BLOCK_RE.sub("", text).strip()
+
+
+def _extract_ltm_block(text: str) -> str:
+    """Return the content inside ``<long_term_memories>`` or empty string."""
+    m = _LTM_BLOCK_RE.search(text)
+    return m.group(1).strip() if m else ""
+
 
 if TYPE_CHECKING:
     from llm import LiteLLMAdapter
@@ -87,9 +105,6 @@ class MemoryManager:
             from .long_term import LongTermMemoryManager
 
             self._long_term = LongTermMemoryManager(llm)
-
-        # Pre-compression flush hint (injected once when nearing threshold)
-        self._flush_hint_injected = False
 
     @classmethod
     async def from_session(
@@ -261,22 +276,6 @@ class MemoryManager:
         # 2. Add short-term memory (includes summary messages and recent messages)
         context.extend(self.short_term.get_messages())
 
-        # 3. Pre-compression flush hint: remind agent to save durable memories
-        if self._should_inject_flush_hint():
-            ltm_dir = self._long_term.memory_dir if self._long_term else "~/.ouro/memory"
-            context.append(
-                LLMMessage(
-                    role="user",
-                    content=(
-                        "[System] Context window is filling up and will be compressed soon. "
-                        "If you learned important information this session that should persist "
-                        "across sessions, save it to long-term memory now "
-                        f"(edit {ltm_dir}/memory.md)."
-                    ),
-                )
-            )
-            self._flush_hint_injected = True
-
         return context
 
     @property
@@ -337,6 +336,9 @@ class MemoryManager:
         does NOT include the conversation messages (they are already in the LLM
         context), so the LLM call reuses the cached prefix.
 
+        When long-term memory is enabled, the prompt also asks the LLM to
+        extract durable memories in a ``<long_term_memories>`` XML block.
+
         Returns:
             LLMMessage with role="user" containing the compaction instruction
         """
@@ -346,7 +348,11 @@ class MemoryManager:
         todo_context = self._todo_context_provider() if self._todo_context_provider else None
 
         prompt_text = self.compressor.build_compaction_prompt(
-            messages, strategy, target_tokens, todo_context
+            messages,
+            strategy,
+            target_tokens,
+            todo_context,
+            ltm_enabled=self._long_term is not None,
         )
         return LLMMessage(role="user", content=prompt_text)
 
@@ -381,6 +387,9 @@ class MemoryManager:
         This is the counterpart to get_compaction_prompt() — called after
         the LLM produces the summary in the react loop.
 
+        When long-term memory is enabled, this also extracts and persists
+        any ``<long_term_memories>`` block from the summary.
+
         Args:
             summary_text: The LLM-generated summary text
             usage: Optional token usage from the compression LLM call
@@ -396,6 +405,14 @@ class MemoryManager:
         logger.info(
             f"🗜️  Applying compression to {len(messages)} messages using {strategy} strategy"
         )
+
+        # Extract and persist long-term memories before stripping from summary
+        if self._long_term is not None:
+            self._extract_and_save_ltm(summary_text)
+
+        # Strip the <long_term_memories> block from the summary so it doesn't
+        # consume short-term context tokens.
+        summary_text = _strip_ltm_block(summary_text)
 
         # Inject todo context into summary
         if todo_context and "[Current Tasks]" not in summary_text:
@@ -546,21 +563,6 @@ class MemoryManager:
 
         return False, None
 
-    def _should_inject_flush_hint(self) -> bool:
-        """Check if we should inject a pre-compression flush hint.
-
-        Returns True once when context exceeds 85% of the compression threshold
-        and long-term memory is enabled.
-        """
-        if self._flush_hint_injected:
-            return False
-        if self._long_term is None:
-            return False
-        if not Config.MEMORY_ENABLED:
-            return False
-        soft_threshold = int(Config.MEMORY_COMPRESSION_THRESHOLD * 0.85)
-        return self.current_tokens > soft_threshold
-
     def _select_strategy(self, messages: List[LLMMessage]) -> str:
         """Auto-select compression strategy based on message characteristics.
 
@@ -705,7 +707,42 @@ class MemoryManager:
         self.last_compression_savings = 0
         self.compression_count = 0
         self._compression_needed = False
-        self._flush_hint_injected = False
+
+    def _extract_and_save_ltm(self, summary_text: str) -> None:
+        """Extract ``<long_term_memories>`` from *summary_text* and append to store.
+
+        Runs synchronously (file I/O via asyncio.to_thread happens inside
+        the store) but is called from the synchronous ``apply_compression``,
+        so we schedule the async save as a fire-and-forget task.
+        """
+        import asyncio
+
+        new_memories = _extract_ltm_block(summary_text)
+        if not new_memories or self._long_term is None:
+            return
+
+        ltm = self._long_term
+
+        async def _save() -> None:
+            try:
+                existing = await ltm.store.load()
+                if existing.strip():
+                    merged = existing.rstrip("\n") + "\n\n" + new_memories + "\n"
+                else:
+                    merged = new_memories + "\n"
+                await ltm.store.save(merged)
+                logger.info(
+                    "Saved %d chars of long-term memories during compaction", len(new_memories)
+                )
+            except Exception:
+                logger.warning("Failed to save long-term memories during compaction", exc_info=True)
+
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_save())
+        except RuntimeError:
+            # No running loop — shouldn't happen in normal flow, but be safe
+            logger.debug("No running event loop; skipping LTM save")
 
     def rollback_incomplete_exchange(self) -> None:
         """Rollback the last incomplete assistant response with tool_calls.
