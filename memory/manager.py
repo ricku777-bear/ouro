@@ -77,7 +77,7 @@ class MemoryManager:
             self._session_created = False
 
         # Initialize components using Config directly
-        self.short_term = ShortTermMemory(max_size=Config.MEMORY_SHORT_TERM_SIZE)
+        self.short_term = ShortTermMemory()
         self.compressor = WorkingMemoryCompressor(llm)
         self.token_tracker = TokenTracker()
 
@@ -244,8 +244,7 @@ class MemoryManager:
         # Log memory state (stored content size, not API usage)
         logger.debug(
             f"Memory state: {self.current_tokens} stored tokens, "
-            f"{self.short_term.count()}/{Config.MEMORY_SHORT_TERM_SIZE} messages, "
-            f"full={self.short_term.is_full()}"
+            f"{self.short_term.count()} messages"
         )
 
         # Check if compression is needed (deferred to _react_loop for cache-safe forking)
@@ -258,8 +257,7 @@ class MemoryManager:
             # Log compression check details
             logger.debug(
                 f"Compression check: stored={self.current_tokens}, "
-                f"threshold={Config.MEMORY_COMPRESSION_THRESHOLD}, "
-                f"short_term_full={self.short_term.is_full()}"
+                f"threshold={Config.MEMORY_COMPRESSION_THRESHOLD}"
             )
 
     def get_context_for_llm(self) -> List[LLMMessage]:
@@ -544,21 +542,11 @@ class MemoryManager:
         if not Config.MEMORY_ENABLED:
             return False, "compression_disabled"
 
-        # Hard limit: must compress
+        # Token hard limit: must compress
         if self.current_tokens > Config.MEMORY_COMPRESSION_THRESHOLD:
             return (
                 True,
                 f"hard_limit ({self.current_tokens} > {Config.MEMORY_COMPRESSION_THRESHOLD})",
-            )
-
-        # CRITICAL: Compress when short-term memory is full to prevent eviction
-        # If we don't compress, the next message will cause deque to evict the oldest message,
-        # which may break tool_use/tool_result pairs
-        if self.short_term.is_full():
-            return (
-                True,
-                f"short_term_full ({self.short_term.count()}/{Config.MEMORY_SHORT_TERM_SIZE} messages, "
-                f"current tokens: {self.current_tokens})",
             )
 
         return False, None

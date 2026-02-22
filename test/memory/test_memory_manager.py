@@ -88,33 +88,21 @@ class TestMemoryManagerBasics:
 class TestMemoryCompression:
     """Test compression triggering and behavior."""
 
-    async def test_compression_on_short_term_full(self, set_memory_config, mock_llm):
-        """Test compression is flagged when short-term memory is full.
+    async def test_no_compression_below_token_threshold(self, set_memory_config, mock_llm):
+        """Test that many small messages do NOT trigger compression when below token threshold.
 
-        With cache-safe forking, add_message() defers compression (sets a flag)
-        instead of compressing immediately. The actual compression happens in
-        the react loop via apply_compression().
+        Compression is only triggered by token threshold, not message count.
         """
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=5,
             MEMORY_COMPRESSION_THRESHOLD=200000,  # Very high to avoid hard limit
         )
         manager = MemoryManager(mock_llm)
 
-        # Add messages until short-term is full
-        for i in range(5):
+        for i in range(50):
             await manager.add_message(LLMMessage(role="user", content=f"Message {i}"))
 
-        # Compression is now deferred — flag should be set
-        assert manager.needs_compression()
-
-        # Simulate what the react loop does: call compress() to complete the cycle
-        await manager.compress()
-
-        assert manager.compression_count == 1
-        assert manager.was_compressed_last_iteration
+        assert manager.short_term.count() == 50
         assert not manager.needs_compression()
-        assert not manager.short_term.is_full()
 
     async def test_compression_on_hard_limit(self, set_memory_config, mock_llm):
         """Test compression is flagged on hard limit (compression threshold).
@@ -123,7 +111,6 @@ class TestMemoryCompression:
         """
         set_memory_config(
             MEMORY_COMPRESSION_THRESHOLD=100,  # Very low to trigger easily
-            MEMORY_SHORT_TERM_SIZE=100,
         )
         manager = MemoryManager(mock_llm)
 
@@ -141,7 +128,6 @@ class TestMemoryCompression:
     async def test_compression_creates_summary(self, set_memory_config, mock_llm, simple_messages):
         """Test that compression creates a summary message in short_term."""
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=10,  # Large enough to not auto-trigger
             MEMORY_COMPRESSION_THRESHOLD=200000,
         )
         manager = MemoryManager(mock_llm)
@@ -192,7 +178,6 @@ class TestToolCallMatching:
     ):
         """Test that tool_use and tool_result pairs are preserved together."""
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=3,
             MEMORY_SHORT_TERM_MIN_SIZE=2,
             MEMORY_COMPRESSION_THRESHOLD=200000,
         )
@@ -231,7 +216,6 @@ class TestToolCallMatching:
     ):
         """Test behavior with mismatched tool_use/tool_result pairs."""
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=4,
             MEMORY_SHORT_TERM_MIN_SIZE=2,
         )
         manager = MemoryManager(mock_llm)
@@ -277,7 +261,6 @@ class TestToolCallMatching:
         is preserved via todo_context injection from MemoryManager's provider callback.
         """
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=10,  # Large enough to avoid auto-compression
             MEMORY_SHORT_TERM_MIN_SIZE=1,
         )
         manager = MemoryManager(mock_llm)
@@ -316,7 +299,6 @@ class TestToolCallMatching:
     async def test_multiple_tool_pairs_in_sequence(self, set_memory_config, mock_llm):
         """Test multiple consecutive tool_use/tool_result pairs."""
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=10,
             MEMORY_SHORT_TERM_MIN_SIZE=2,
         )
         manager = MemoryManager(mock_llm)
@@ -444,7 +426,7 @@ class TestEdgeCases:
 
     async def test_compression_with_mixed_content(self, set_memory_config, mock_llm):
         """Test compression with mixed text and tool content."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=5)
+        set_memory_config()
         manager = MemoryManager(mock_llm)
 
         messages = [
@@ -638,7 +620,7 @@ class TestDeferredCompression:
 
     async def test_needs_compression_set_on_threshold(self, set_memory_config, mock_llm):
         """Test that needs_compression() is True after exceeding threshold."""
-        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=100, MEMORY_SHORT_TERM_SIZE=100)
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=100)
         manager = MemoryManager(mock_llm)
 
         long_message = "This is a very long message. " * 100
@@ -646,23 +628,23 @@ class TestDeferredCompression:
 
         assert manager.needs_compression()
 
-    async def test_needs_compression_set_on_full(self, set_memory_config, mock_llm):
-        """Test that needs_compression() is True when short-term is full."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=3, MEMORY_COMPRESSION_THRESHOLD=200000)
+    async def test_no_compression_below_threshold(self, set_memory_config, mock_llm):
+        """Test that needs_compression() is False when below token threshold."""
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=200000)
         manager = MemoryManager(mock_llm)
 
-        for i in range(3):
+        for i in range(20):
             await manager.add_message(LLMMessage(role="user", content=f"Message {i}"))
 
-        assert manager.needs_compression()
+        assert not manager.needs_compression()
 
     async def test_needs_compression_cleared_after_compress(self, set_memory_config, mock_llm):
         """Test that needs_compression() is cleared after compress()."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=3, MEMORY_COMPRESSION_THRESHOLD=200000)
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=100)
         manager = MemoryManager(mock_llm)
 
-        for i in range(3):
-            await manager.add_message(LLMMessage(role="user", content=f"Message {i}"))
+        long_message = "This is a very long message. " * 100
+        await manager.add_message(LLMMessage(role="user", content=long_message))
 
         assert manager.needs_compression()
         await manager.compress()
@@ -670,11 +652,11 @@ class TestDeferredCompression:
 
     async def test_needs_compression_cleared_after_reset(self, set_memory_config, mock_llm):
         """Test that needs_compression() is cleared after reset()."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=3, MEMORY_COMPRESSION_THRESHOLD=200000)
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=100)
         manager = MemoryManager(mock_llm)
 
-        for i in range(3):
-            await manager.add_message(LLMMessage(role="user", content=f"Message {i}"))
+        long_message = "This is a very long message. " * 100
+        await manager.add_message(LLMMessage(role="user", content=long_message))
 
         assert manager.needs_compression()
         manager.reset()
@@ -707,7 +689,7 @@ class TestDeferredCompression:
 
     async def test_apply_compression(self, set_memory_config, mock_llm, simple_messages):
         """Test apply_compression() updates memory state correctly."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=10, MEMORY_COMPRESSION_THRESHOLD=200000)
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=200000)
         manager = MemoryManager(mock_llm)
 
         for msg in simple_messages:
@@ -742,7 +724,7 @@ class TestDeferredCompression:
         self, set_memory_config, mock_llm, simple_messages
     ):
         """Test apply_compression() injects todo context."""
-        set_memory_config(MEMORY_SHORT_TERM_SIZE=10, MEMORY_COMPRESSION_THRESHOLD=200000)
+        set_memory_config(MEMORY_COMPRESSION_THRESHOLD=200000)
         manager = MemoryManager(mock_llm)
         manager.set_todo_context_provider(lambda: "1. [pending] Important task")
 
@@ -769,7 +751,6 @@ class TestDeferredCompression:
     ):
         """Test apply_compression() with selective strategy preserves recent messages."""
         set_memory_config(
-            MEMORY_SHORT_TERM_SIZE=20,
             MEMORY_SHORT_TERM_MIN_SIZE=2,
             MEMORY_COMPRESSION_THRESHOLD=200000,
         )
