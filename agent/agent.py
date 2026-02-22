@@ -61,7 +61,7 @@ When you have enough information, provide your final answer directly without usi
 - Use write_file only for creating new files or complete rewrites
 - Prefer Tasks + sub_agent_batch for parallelizable work. Avoid multi_task (legacy) when Tasks tools are available.
 - Use TaskCreate/TaskUpdate/TaskList/TaskGet/TaskFanout/TaskDumpMd for task graphs (see each tool's description for the full contract).
-- Use manage_todo_list to track progress for complex tasks when Tasks are unnecessary.
+- Use manage_todo_list only for a simple linear checklist or if Tasks tools are unavailable.
 </tool_usage_guidelines>
 
 <agents_md>
