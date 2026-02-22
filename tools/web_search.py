@@ -16,9 +16,11 @@ HttpClient._impersonates_os = ("macos", "linux", "windows")
 
 # Default timeout for web search operations
 DEFAULT_SEARCH_TIMEOUT = 30.0
+DEFAULT_MAX_RESULTS = 5
+MAX_RESULTS_CAP = 10
 
 
-def _sync_search(query: str, max_results: int = 5) -> List[Dict[str, str]]:
+def _sync_search(query: str, max_results: int = DEFAULT_MAX_RESULTS) -> List[Dict[str, str]]:
     """Synchronous search function to run in thread."""
     with DDGS() as ddgs:
         return list(ddgs.text(query, max_results=max_results))
@@ -37,7 +39,8 @@ class WebSearchTool(BaseTool):
     def description(self) -> str:
         return (
             "Search the web for information using DuckDuckGo. "
-            "Returns up to 5 results as markdown: [title](url) plus a short snippet."
+            "Returns a short list of results as markdown: [title](url) plus a short snippet. "
+            "Use max_results to request more results when needed (cap applies)."
         )
 
     @property
@@ -47,6 +50,11 @@ class WebSearchTool(BaseTool):
                 "type": "string",
                 "description": "Search query",
             },
+            "max_results": {
+                "type": "integer",
+                "description": f"Number of results to return (default: {DEFAULT_MAX_RESULTS}, cap: {MAX_RESULTS_CAP})",
+                "default": DEFAULT_MAX_RESULTS,
+            },
             "timeout": {
                 "type": "number",
                 "description": "Optional timeout in seconds (default: 30)",
@@ -54,13 +62,23 @@ class WebSearchTool(BaseTool):
             },
         }
 
-    async def execute(self, query: str, timeout: float = DEFAULT_SEARCH_TIMEOUT) -> str:
+    async def execute(
+        self,
+        query: str,
+        max_results: int = DEFAULT_MAX_RESULTS,
+        timeout: float = DEFAULT_SEARCH_TIMEOUT,
+    ) -> str:
         """Execute web search and return results."""
         try:
             timeout_val = float(timeout) if timeout else DEFAULT_SEARCH_TIMEOUT
+            try:
+                requested = int(max_results)
+            except (TypeError, ValueError):
+                requested = DEFAULT_MAX_RESULTS
+            requested = max(1, min(requested, MAX_RESULTS_CAP))
             results = []
             async with asyncio.timeout(timeout_val):
-                search_results = await asyncio.to_thread(_sync_search, query, 5)
+                search_results = await asyncio.to_thread(_sync_search, query, requested)
                 for r in search_results:
                     title = r.get("title", "")
                     href = r.get("href", "")
