@@ -127,6 +127,8 @@ def create_agent(
         sessions_dir=sessions_dir,
         memory_dir=memory_dir,
     )
+    # Expose the shared TaskStore for optional run-level checks/guards.
+    agent.task_store = task_store  # type: ignore[attr-defined]
 
     # Add tools that require agent reference
     agent.tool_executor.add_tool(MultiTaskTool(agent))

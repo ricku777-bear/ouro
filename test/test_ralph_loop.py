@@ -271,6 +271,35 @@ async def test_run_with_verify_false_dispatches_to_react_loop():
 
 
 @pytest.mark.asyncio
+async def test_run_enforces_tasks_completion_gate_until_all_completed():
+    """If TaskStore has incomplete tasks, LoopAgent.run() continues looping instead of returning early."""
+    from agent.tasks import TaskStore
+
+    agent = _make_loop_agent()
+    store = TaskStore()
+    await store.create(content="Do A", active_form="Doing A", status="pending")
+    agent.task_store = store
+
+    calls = {"n": 0}
+
+    async def _react_side_effect(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "early answer"
+        # Simulate the second loop completing the task via TaskUpdate in normal runs.
+        await store.update("1", status="completed")
+        return "final answer"
+
+    agent._react_loop = AsyncMock(side_effect=_react_side_effect)
+
+    result = await agent.run("test task", verify=False)
+    assert result == "final answer"
+    assert agent._react_loop.await_count == 2
+    # One user message for the task itself + one injected gate message.
+    assert agent.memory.add_message.await_count == 2
+
+
+@pytest.mark.asyncio
 async def test_llm_verifier_complete():
     """LLMVerifier parses a COMPLETE response correctly."""
     mock_llm = MagicMock()

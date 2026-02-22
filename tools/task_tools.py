@@ -59,8 +59,13 @@ class TaskFanoutTool(BaseTool):
         return (
             "Create multiple child tasks for a phase, inheriting the phase's blockedBy by default. "
             "Optionally rewrite a join task to depend on the new child task IDs instead of the phase. "
-            "Common pattern: create an identify task -> phase task blockedBy identify -> join task blockedBy phase; "
-            "then TaskFanout the phase into named leaf tasks and rewrite the join to depend on leaf tasks."
+            "Use this when you want true fan-out (N leaf tasks) + join (1 aggregation task) execution.\n\n"
+            "Recommended pattern:\n"
+            "1) Create an identify task to resolve the concrete item list.\n"
+            "2) Create a phase/container task blockedBy identify.\n"
+            "3) Create a join task blockedBy phase.\n"
+            "4) Call TaskFanout(phaseId, joinId, children=[...]) to create named leaf tasks; children inherit phase.blockedBy.\n"
+            "5) Mark the phase completed (it was only a container) and run leaf tasks (e.g. via sub_agent_batch), then complete join."
         )
 
     @property
@@ -193,7 +198,8 @@ class TaskDumpMdTool(BaseTool):
     def description(self) -> str:
         return (
             "Render the current task graph as a human-readable tasks.md and write it to disk. "
-            "Uses an atomic replace to avoid partial writes."
+            "Uses an atomic replace to avoid partial writes. "
+            "When includeDebug=true, also writes a title-focused tasks.debug.md (no long details)."
         )
 
     @property
@@ -267,7 +273,13 @@ class TaskCreateTool(BaseTool):
         return """Create a task in the session task graph.
 
 Use tasks for complex work: break down steps, model dependencies via blockedBy/blocks,
-and update status as you progress. Prefer Tasks tools over manage_todo_list."""
+and update status as you progress. Prefer Tasks tools over manage_todo_list.
+
+Guidelines:
+- Tasks should represent real execution units (leaf work should be its own task).
+- If the N items are unknown upfront, create an identify task first; record the resolved item list in that task (content or detail) and complete it before creating leaf tasks.
+- Avoid placeholder leaf tasks like "item 1" / "Song #1" that re-decide the item later; leaf task titles should include the concrete item name.
+- For "analyze Top N items" requests: create N leaf tasks + 1 join task, with join blockedBy the N leaf tasks (TaskFanout can help)."""
 
     def __init__(self, store: TaskStore):
         self._store = store
@@ -342,6 +354,7 @@ class TaskUpdateTool(BaseTool):
         return """Update an existing task: status/content, and dependency edges.
 
 Use `detail` to store long-form results/notes. Keep `content` short and stable (task title).
+By default, `detail` is append-only; set replaceDetail=true to overwrite/clear.
 
 Dependency rules:
 - You may only edit dependency edges (blockedBy/addBlockedBy/removeBlockedBy/addBlocks/removeBlocks) for tasks that are pending.
@@ -481,7 +494,10 @@ class TaskListTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "List all tasks in the session task graph, plus which tasks are available to start."
+        return (
+            "List all tasks in the session task graph, plus which tasks are available to start. "
+            "Use this to confirm there are no pending/in_progress tasks left before finishing."
+        )
 
     def __init__(self, store: TaskStore):
         self._store = store
@@ -514,7 +530,7 @@ class TaskGetTool(BaseTool):
 
     @property
     def description(self) -> str:
-        return "Get a single task by id."
+        return "Get a single task by id (includes long-form detail when present)."
 
     def __init__(self, store: TaskStore):
         self._store = store
