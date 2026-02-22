@@ -129,6 +129,14 @@ class Config:
     SLACK_BOT_TOKEN = _cfg.get("SLACK_BOT_TOKEN", "")
     SLACK_APP_TOKEN = _cfg.get("SLACK_APP_TOKEN", "")
 
+    # Proactive: Heartbeat & Active Hours
+    BOT_HEARTBEAT_INTERVAL = int(
+        _cfg.get("BOT_HEARTBEAT_INTERVAL", "1800")
+    )  # seconds; 0 = disabled
+    BOT_ACTIVE_HOURS_START = int(_cfg.get("BOT_ACTIVE_HOURS_START", "8"))  # 24h format
+    BOT_ACTIVE_HOURS_END = int(_cfg.get("BOT_ACTIVE_HOURS_END", "22"))  # 24h format
+    BOT_ACTIVE_HOURS_TZ = _cfg.get("BOT_ACTIVE_HOURS_TZ", "")  # empty = local timezone
+
     @classmethod
     def get_retry_delay(cls, attempt: int) -> float:
         """Calculate delay for a given retry attempt using exponential backoff.

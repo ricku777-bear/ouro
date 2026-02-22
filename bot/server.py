@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from aiohttp import web
 
 from bot.channel.base import Channel, IncomingMessage, OutgoingMessage
+from bot.proactive import CronScheduler, HeartbeatRunner, ProactiveExecutor
 from bot.session_router import SessionRouter
 from config import Config
 
@@ -41,12 +42,19 @@ class BotServer:
         self,
         session_router: SessionRouter,
         channels: list[Channel],
+        *,
+        heartbeat: HeartbeatRunner | None = None,
+        cron_scheduler: CronScheduler | None = None,
     ) -> None:
         self._router = session_router
         self._channels = channels
+        self._heartbeat = heartbeat
+        self._cron_scheduler = cron_scheduler
         self._app = web.Application()
         self._app.router.add_get("/health", self._handle_health)
         self._cleanup_task: asyncio.Task | None = None
+        self._heartbeat_task: asyncio.Task | None = None
+        self._cron_task: asyncio.Task | None = None
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         return web.json_response(
@@ -60,11 +68,13 @@ class BotServer:
 
     _HELP_TEXT = (
         "Available commands:\n"
-        "  /new     — Start a fresh conversation (reset session)\n"
-        "  /reset   — Alias for /new\n"
-        "  /compact — Compress conversation memory to save tokens\n"
-        "  /status  — Show session statistics\n"
-        "  /help    — Show this message"
+        "  /new       — Start a fresh conversation (reset session)\n"
+        "  /reset     — Alias for /new\n"
+        "  /compact   — Compress conversation memory to save tokens\n"
+        "  /status    — Show session statistics\n"
+        "  /heartbeat — Show heartbeat status\n"
+        "  /cron      — Manage cron jobs (list | add | remove)\n"
+        "  /help      — Show this message"
     )
 
     async def _handle_command(
@@ -149,6 +159,14 @@ class BotServer:
             )
             return True
 
+        if cmd == "/heartbeat":
+            await self._handle_heartbeat_command(channel, msg)
+            return True
+
+        if cmd == "/cron":
+            await self._handle_cron_command(channel, msg)
+            return True
+
         if cmd == "/help":
             await channel.send_message(
                 OutgoingMessage(
@@ -160,6 +178,143 @@ class BotServer:
 
         # Unknown /command — pass through to agent as a normal message
         return False
+
+    async def _handle_heartbeat_command(self, channel: Channel, msg: IncomingMessage) -> None:
+        """Show heartbeat status."""
+        if not self._heartbeat:
+            text = "Heartbeat: not configured"
+        elif not self._heartbeat.enabled:
+            text = "Heartbeat: disabled (interval=0)"
+        else:
+            lines = [
+                "Heartbeat: enabled",
+                f"  Interval: {self._heartbeat.interval}s",
+                f"  Last run: {self._heartbeat.last_run or 'never'}",
+                f"  Next run: {self._heartbeat.next_run or 'pending'}",
+            ]
+            text = "\n".join(lines)
+        await channel.send_message(OutgoingMessage(conversation_id=msg.conversation_id, text=text))
+
+    async def _handle_cron_command(self, channel: Channel, msg: IncomingMessage) -> None:
+        """Handle /cron subcommands: list, add, remove."""
+        parts = msg.text.strip().split(maxsplit=2)
+        sub = parts[1].lower() if len(parts) > 1 else "list"
+
+        if sub == "list":
+            await self._cron_list(channel, msg)
+        elif sub == "add":
+            await self._cron_add(channel, msg, parts)
+        elif sub == "remove":
+            await self._cron_remove(channel, msg, parts)
+        else:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="Usage: /cron list | /cron add <schedule> <prompt> | /cron remove <id>",
+                )
+            )
+
+    async def _cron_list(self, channel: Channel, msg: IncomingMessage) -> None:
+        if not self._cron_scheduler:
+            await channel.send_message(
+                OutgoingMessage(conversation_id=msg.conversation_id, text="Cron: not configured")
+            )
+            return
+        jobs = self._cron_scheduler.jobs
+        if not jobs:
+            await channel.send_message(
+                OutgoingMessage(conversation_id=msg.conversation_id, text="No cron jobs.")
+            )
+            return
+        lines = []
+        for j in jobs:
+            status = "on" if j.enabled else "off"
+            sched = f"{j.schedule_type}={j.schedule_value}"
+            lines.append(f"  [{status}] {j.id}  {sched}  {j.name}")
+        await channel.send_message(
+            OutgoingMessage(
+                conversation_id=msg.conversation_id,
+                text="Cron jobs:\n" + "\n".join(lines),
+            )
+        )
+
+    async def _cron_add(self, channel: Channel, msg: IncomingMessage, parts: list[str]) -> None:
+        if not self._cron_scheduler:
+            await channel.send_message(
+                OutgoingMessage(conversation_id=msg.conversation_id, text="Cron: not configured")
+            )
+            return
+        # /cron add <schedule> <prompt>
+        # Re-split the rest after "add" to get schedule + prompt
+        rest = msg.text.strip().split(maxsplit=2)
+        if len(rest) < 3:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="Usage: /cron add <schedule> <prompt>\n"
+                    "  schedule: cron expression (e.g. '0 9 * * *') or interval in seconds",
+                )
+            )
+            return
+        add_rest = rest[2]  # everything after "/cron add"
+        # First token is schedule, rest is prompt
+        add_parts = add_rest.split(maxsplit=1)
+        if len(add_parts) < 2:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="Usage: /cron add <schedule> <prompt>",
+                )
+            )
+            return
+        schedule_expr, prompt = add_parts
+        try:
+            job = self._cron_scheduler.add_job(schedule_expr, prompt)
+        except (ValueError, KeyError) as exc:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text=f"Invalid schedule: {exc}",
+                )
+            )
+            return
+        await channel.send_message(
+            OutgoingMessage(
+                conversation_id=msg.conversation_id,
+                text=f"Added cron job {job.id}: next run at {job.next_run_at}",
+            )
+        )
+
+    async def _cron_remove(self, channel: Channel, msg: IncomingMessage, parts: list[str]) -> None:
+        if not self._cron_scheduler:
+            await channel.send_message(
+                OutgoingMessage(conversation_id=msg.conversation_id, text="Cron: not configured")
+            )
+            return
+        rest = msg.text.strip().split()
+        if len(rest) < 3:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text="Usage: /cron remove <id>",
+                )
+            )
+            return
+        job_id = rest[2]
+        if self._cron_scheduler.remove_job(job_id):
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text=f"Removed cron job {job_id}.",
+                )
+            )
+        else:
+            await channel.send_message(
+                OutgoingMessage(
+                    conversation_id=msg.conversation_id,
+                    text=f"No cron job with id {job_id}.",
+                )
+            )
 
     # ---- Message processing ---------------------------------------------------
 
@@ -237,6 +392,12 @@ class BotServer:
         """Start channels + health server, block until cancelled."""
         self._cleanup_task = asyncio.create_task(self._periodic_cleanup())
 
+        # Start proactive background tasks
+        if self._heartbeat and self._heartbeat.enabled:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat.loop())
+        if self._cron_scheduler:
+            self._cron_task = asyncio.create_task(self._cron_scheduler.loop())
+
         # Start each channel, giving it a callback bound to itself.
         for ch in self._channels:
             callback = self._make_callback(ch)
@@ -257,6 +418,10 @@ class BotServer:
         finally:
             if self._cleanup_task:
                 self._cleanup_task.cancel()
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+            if self._cron_task:
+                self._cron_task.cancel()
             for ch in self._channels:
                 await ch.stop()
             await runner.cleanup()
@@ -355,7 +520,18 @@ async def run_bot(model_id: str | None = None) -> None:
         return agent
 
     router = SessionRouter(agent_factory=agent_factory)
-    server = BotServer(session_router=router, channels=channels)
+
+    # Proactive mechanisms (heartbeat + cron)
+    executor = ProactiveExecutor(agent_factory, channels, router)
+    heartbeat = HeartbeatRunner(executor)
+    cron = CronScheduler(executor)
+
+    server = BotServer(
+        session_router=router,
+        channels=channels,
+        heartbeat=heartbeat,
+        cron_scheduler=cron,
+    )
 
     host = Config.BOT_HOST
     port = Config.BOT_PORT

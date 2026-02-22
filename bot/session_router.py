@@ -120,6 +120,22 @@ class SessionRouter:
             return None
         return time.time() - ts
 
+    def iter_active_sessions(self) -> list[tuple[str, str]]:
+        """Return (channel_name, conversation_id) pairs for all live sessions."""
+        result: list[tuple[str, str]] = []
+        for key in self._sessions:
+            channel, conversation_id = key.split(":", 1)
+            result.append((channel, conversation_id))
+        return result
+
+    def is_session_busy(self, channel: str, conversation_id: str) -> bool:
+        """Check whether the session lock is currently held (agent processing)."""
+        key = self._session_key(channel, conversation_id)
+        lock = self._locks.get(key)
+        if lock is None:
+            return False
+        return lock.locked()
+
     @property
     def active_session_count(self) -> int:
         """Number of active sessions."""
