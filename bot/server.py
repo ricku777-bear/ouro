@@ -504,6 +504,10 @@ async def run_bot(model_id: str | None = None) -> None:
     except Exception as e:
         logger.warning("Failed to bootstrap skills registry: %s", e)
 
+    # Shared state populated after CronScheduler is created, so agent_factory
+    # can inject CronTool into each new agent without a circular dependency.
+    _shared: dict[str, CronScheduler] = {}
+
     async def agent_factory() -> LoopAgent:
         agent = create_agent(model_id=model_id)
         if soul_content:
@@ -517,6 +521,11 @@ async def run_bot(model_id: str | None = None) -> None:
                 agent.set_skills_section(section)
         except Exception as e:
             logger.warning("Failed to load skills for new session: %s", e)
+        # Give the agent a manage_cron tool so it can schedule tasks on behalf of the user
+        if "cron" in _shared:
+            from tools.cron_tool import CronTool
+
+            agent.tool_executor.add_tool(CronTool(_shared["cron"]))
         return agent
 
     router = SessionRouter(agent_factory=agent_factory)
@@ -525,6 +534,7 @@ async def run_bot(model_id: str | None = None) -> None:
     executor = ProactiveExecutor(agent_factory, channels, router)
     heartbeat = HeartbeatRunner(executor)
     cron = CronScheduler(executor)
+    _shared["cron"] = cron
 
     server = BotServer(
         session_router=router,
