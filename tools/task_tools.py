@@ -382,6 +382,7 @@ Guidelines:
 - If the N items are unknown upfront, create an identify task first; record the resolved item list in that task (content or detail) and complete it before creating leaf tasks.
 - Avoid placeholder leaf tasks like "item 1" / "Song #1" that re-decide the item later; leaf task titles should include the concrete item name.
 - Prefer meaningful tasks with output: if you create a gate/identify/phase task, make it produce reusable inputs or constraints in `detail`, then mark it completed. Avoid empty "container" tasks unless you intend to use TaskFanout (which can auto-complete pure containers).
+- Avoid redundant parent+child tasks that repeat the same work: if you create a parent like "Analyze Top N items" and also create N leaf analyses, the parent should add reusable value (e.g., normalize the input list, define evaluation dimensions, or record shared constraints in `detail`). Otherwise omit the parent and fan out directly.
 - For "analyze Top N items" requests: create N leaf tasks + 1 join task, with join blockedBy the N leaf tasks (TaskFanout can help)."""
 
     def __init__(self, store: TaskStore):
