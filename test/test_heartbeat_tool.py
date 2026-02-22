@@ -20,8 +20,7 @@ def _seed_file(tmp_path, items: list[str]) -> None:
     """Write a heartbeat.md with the given checklist items."""
     path = tmp_path / "heartbeat.md"
     lines = ["# Heartbeat Checklist\n", "\n"]
-    for item in items:
-        lines.append(f"- [ ] {item}\n")
+    lines.extend(f"- [ ] {item}\n" for item in items)
     path.write_text("".join(lines), encoding="utf-8")
 
 
