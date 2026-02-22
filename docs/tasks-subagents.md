@@ -84,7 +84,7 @@ The worker must update **only its own** task ID. It can propose new tasks, but t
 
 The existing `multi_task` tool is generic (string tasks, optional dependency indices). For tasks-based orchestration, a cleaner interface is a tool that runs **task IDs**.
 
-### New tool: `SubAgentBatch` (recommended)
+### New tool: `sub_agent_batch` (recommended)
 
 Runs a set of workers concurrently. The orchestrator decides which task IDs to run by calling `TaskList` first.
 
@@ -118,8 +118,8 @@ Result sketch (bounded):
 {
   "ok": true,
   "results": [
-    { "taskId": "12", "ok": true, "summary": "…", "final": "…(truncated)…" },
-    { "taskId": "15", "ok": false, "summary": "Blocked: not available" }
+    { "taskId": "12", "ok": true, "output": "…(truncated)…" },
+    { "taskId": "15", "ok": false, "error": "…" }
   ]
 }
 ```
@@ -172,4 +172,3 @@ Future improvement:
 
 - `TaskList` includes `tasksMd` and `debugTasksMd` for quick inspection.
 - `TaskDumpMd(path="tasks.md", includeDebug=true)` persists snapshots for review.
-

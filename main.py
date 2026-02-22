@@ -28,6 +28,7 @@ from tools.file_ops import FileReadTool, FileWriteTool
 from tools.multi_task import MultiTaskTool
 from tools.shell import ShellTool
 from tools.smart_edit import SmartEditTool
+from tools.sub_agent_batch import SubAgentBatchTool
 from tools.task_tools import (
     TaskCreateTool,
     TaskDumpMdTool,
@@ -125,6 +126,7 @@ def create_agent(
 
     # Add tools that require agent reference
     agent.tool_executor.add_tool(MultiTaskTool(agent))
+    agent.tool_executor.add_tool(SubAgentBatchTool(agent))
 
     return agent
 
