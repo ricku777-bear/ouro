@@ -129,4 +129,3 @@ async def test_sub_agent_batch_rejects_duplicate_task_ids():
     result = json.loads(await tool.execute(runs=[{"taskId": tid}, {"taskId": tid}]))
     assert result["ok"] is False
     assert "duplicate" in result["error"].lower()
-

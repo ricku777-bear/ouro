@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from llm import LLMMessage
 
@@ -35,7 +35,7 @@ class SubAgentBatchTool(BaseTool):
     MAX_PARALLEL_CAP = 8
     MAX_OUTPUT_CHARS = 4000
 
-    def __init__(self, agent: "BaseAgent"):
+    def __init__(self, agent: BaseAgent):
         self.agent = agent
 
     @property
@@ -51,7 +51,7 @@ class SubAgentBatchTool(BaseTool):
         )
 
     @property
-    def parameters(self) -> Dict[str, Any]:
+    def parameters(self) -> dict[str, Any]:
         return {
             "runs": {
                 "type": "array",
@@ -71,12 +71,14 @@ class SubAgentBatchTool(BaseTool):
             },
             "maxParallel": {
                 "type": "integer",
-                "description": f"Max concurrent sub-agents (default: 4, cap: {MAX_PARALLEL_CAP})",
+                "description": (
+                    f"Max concurrent sub-agents (default: 4, cap: {self.MAX_PARALLEL_CAP})"
+                ),
                 "default": 4,
             },
         }
 
-    def to_anthropic_schema(self) -> Dict[str, Any]:
+    def to_anthropic_schema(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "description": self.description,
@@ -87,10 +89,10 @@ class SubAgentBatchTool(BaseTool):
             },
         }
 
-    def _get_subagent_tools(self) -> List[Dict[str, Any]]:
+    def _get_subagent_tools(self) -> list[dict[str, Any]]:
         all_tools = self.agent.tool_executor.get_tool_schemas()
 
-        def _tool_name(schema: Dict[str, Any]) -> str | None:
+        def _tool_name(schema: dict[str, Any]) -> str | None:
             return schema.get("name") or schema.get("function", {}).get("name")
 
         excluded = {self.name, "multi_task"}
@@ -127,7 +129,7 @@ Execute now."""
 
     async def execute(
         self,
-        runs: List[Dict[str, Any]],
+        runs: list[dict[str, Any]],
         maxParallel: int = 4,
         **kwargs,
     ) -> str:
@@ -153,7 +155,7 @@ Execute now."""
 
         tools = self._get_subagent_tools()
         semaphore = asyncio.Semaphore(max_parallel)
-        results: list[dict[str, Any]] = []
+        results: list[dict[str, Any]]
 
         async def _run_one(task_id: str, notes: str) -> dict[str, Any]:
             prompt = self._build_worker_prompt(task_id=task_id, notes=notes)
@@ -178,12 +180,8 @@ Execute now."""
                     return {"taskId": task_id, "ok": False, "error": str(e)}
 
         async with asyncio.TaskGroup() as tg:
-            task_list = [
-                tg.create_task(_run_one(r["taskId"], r["notes"])) for r in normalized
-            ]
+            task_list = [tg.create_task(_run_one(r["taskId"], r["notes"])) for r in normalized]
 
-        for t in task_list:
-            results.append(t.result())
+        results = [t.result() for t in task_list]
 
         return _json({"ok": True, "maxParallel": max_parallel, "results": results})
-
