@@ -11,7 +11,7 @@ import asyncio
 import contextlib
 import hashlib
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from llm import LLMMessage
 
@@ -372,7 +372,9 @@ Execute now."""
             task_id = str(r.get("taskId", "")).strip()
             if not task_id:
                 continue
-            debug_meta = r.get("debug") if isinstance(r.get("debug"), dict) else {}
+            debug_meta = (
+                cast(dict[str, Any], r.get("debug")) if isinstance(r.get("debug"), dict) else {}
+            )
             if r.get("ok") is True:
                 output = str(r.get("output", "") or "")
                 updates.append(
