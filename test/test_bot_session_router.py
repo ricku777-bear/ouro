@@ -64,29 +64,11 @@ async def test_same_conversation_gets_same_lock():
     assert lock1 is lock2
 
 
-async def test_cleanup_idle_sessions():
-    router = SessionRouter(agent_factory=_mock_agent_factory, idle_timeout=0.0)
-
-    await router.get_or_create_agent("feishu", "chat_123")
-    await router.get_or_create_agent("feishu", "chat_456")
-    assert router.active_session_count == 2
-
-    # With idle_timeout=0.0, all sessions are immediately idle
-    removed = router.cleanup_idle_sessions()
-    assert removed == 2
-    assert router.active_session_count == 0
-
-
-async def test_cleanup_preserves_active_sessions():
-    router = SessionRouter(agent_factory=_mock_agent_factory, idle_timeout=3600.0)
-
-    await router.get_or_create_agent("feishu", "chat_123")
-    assert router.active_session_count == 1
-
-    # With a 1-hour timeout, nothing should be cleaned up
-    removed = router.cleanup_idle_sessions()
+async def test_cleanup_stale_sessions_no_sessions_dir():
+    """cleanup_stale_sessions is a no-op without sessions_dir."""
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    removed = await router.cleanup_stale_sessions()
     assert removed == 0
-    assert router.active_session_count == 1
 
 
 async def test_lock_serializes_access():
@@ -117,7 +99,7 @@ async def test_reset_session_destroys_agent():
     await router.get_or_create_agent("feishu", "chat_123")
     assert router.active_session_count == 1
 
-    existed = router.reset_session("feishu", "chat_123")
+    existed = await router.reset_session("feishu", "chat_123")
     assert existed is True
     assert router.active_session_count == 0
     # Lock should also be removed
@@ -126,9 +108,9 @@ async def test_reset_session_destroys_agent():
     assert key not in router._last_active
 
 
-def test_reset_session_nonexistent():
+async def test_reset_session_nonexistent():
     router = SessionRouter(agent_factory=_mock_agent_factory)
-    existed = router.reset_session("feishu", "no_such_conv")
+    existed = await router.reset_session("feishu", "no_such_conv")
     assert existed is False
 
 
@@ -136,7 +118,7 @@ async def test_reset_session_new_agent_after_reset():
     """After reset, get_or_create_agent returns a fresh agent."""
     router = SessionRouter(agent_factory=_mock_agent_factory)
     agent_before = await router.get_or_create_agent("feishu", "chat_123")
-    router.reset_session("feishu", "chat_123")
+    await router.reset_session("feishu", "chat_123")
     agent_after = await router.get_or_create_agent("feishu", "chat_123")
     assert agent_before is not agent_after
 

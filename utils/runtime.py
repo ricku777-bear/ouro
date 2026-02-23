@@ -66,6 +66,48 @@ def get_history_file() -> str:
     return os.path.join(RUNTIME_DIR, "history")
 
 
+_BOT_DIR = os.path.join(RUNTIME_DIR, "bot")
+
+
+def get_bot_sessions_dir() -> str:
+    """Get the bot sessions directory path.
+
+    Returns:
+        Path to ~/.ouro/bot/sessions/
+    """
+    return os.path.join(_BOT_DIR, "sessions")
+
+
+def get_bot_memory_dir() -> str:
+    """Get the bot long-term memory directory path.
+
+    Returns:
+        Path to ~/.ouro/bot/memory/
+    """
+    return os.path.join(_BOT_DIR, "memory")
+
+
+def get_bot_skills_dir() -> str:
+    """Get the bot skills directory path.
+
+    Returns:
+        Path to ~/.ouro/bot/skills/
+    """
+    return os.path.join(_BOT_DIR, "skills")
+
+
+def ensure_bot_dirs() -> None:
+    """Ensure bot-specific runtime directories exist.
+
+    Creates:
+    - ~/.ouro/bot/sessions/
+    - ~/.ouro/bot/memory/
+    - ~/.ouro/bot/skills/
+    """
+    for subdir in ("sessions", "memory", "skills"):
+        os.makedirs(os.path.join(_BOT_DIR, subdir), exist_ok=True)
+
+
 def ensure_runtime_dirs(create_logs: bool = False) -> None:
     """Ensure runtime directories exist.
 
