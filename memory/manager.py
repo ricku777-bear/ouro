@@ -716,13 +716,14 @@ class MemoryManager:
         self._compression_needed = False
 
     def _extract_and_save_ltm(self, summary_text: str) -> None:
-        """Extract ``<long_term_memories>`` from *summary_text* and append to store.
+        """Extract ``<long_term_memories>`` from *summary_text* and append to today's daily file.
 
         Runs synchronously (file I/O via asyncio.to_thread happens inside
         the store) but is called from the synchronous ``apply_compression``,
         so we schedule the async save as a fire-and-forget task.
         """
         import asyncio
+        from datetime import date
 
         new_memories = _extract_ltm_block(summary_text)
         if not new_memories or self._long_term is None:
@@ -732,15 +733,8 @@ class MemoryManager:
 
         async def _save() -> None:
             try:
-                existing = await ltm.store.load()
-                if existing.strip():
-                    merged = existing.rstrip("\n") + "\n\n" + new_memories + "\n"
-                else:
-                    merged = new_memories + "\n"
-                await ltm.store.save(merged)
-                logger.info(
-                    "Saved %d chars of long-term memories during compaction", len(new_memories)
-                )
+                await ltm.store.append_daily(date.today(), new_memories + "\n")
+                logger.info("Saved %d chars of long-term memories to daily file", len(new_memories))
             except Exception:
                 logger.warning("Failed to save long-term memories during compaction", exc_info=True)
 

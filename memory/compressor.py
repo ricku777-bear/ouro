@@ -56,14 +56,15 @@ Original messages ({count} messages, ~{tokens} tokens):
 
     # Appended when long-term memory is enabled: asks LLM to also extract
     # durable memories in a parseable XML block within the same response.
+    # Date prefix is omitted — the daily file name encodes the date.
     COMPACTION_LTM_SUFFIX = (
         "\n\nAdditionally, extract any information from this conversation that should "
         "persist across sessions (user preferences, key decisions with rationale, "
         "project facts, environment details). "
         "Output them in a <long_term_memories> XML block using markdown, e.g.:\n"
         "<long_term_memories>\n"
-        "- [YYYY-MM-DD] User prefers dark theme\n"
-        "- [YYYY-MM-DD] Project uses Python 3.12+\n"
+        "- User prefers dark theme\n"
+        "- Project uses Python 3.12+\n"
         "</long_term_memories>\n"
         "If nothing is worth persisting, output an empty block: <long_term_memories></long_term_memories>"
     )
