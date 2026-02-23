@@ -269,11 +269,7 @@ class BotServer:
             )
             return
 
-        from memory.manager import MemoryManager
-
-        full_id = await MemoryManager.find_session_by_prefix(
-            target, sessions_dir=self._router._sessions_dir
-        )
+        full_id = await self._router.find_session_by_prefix(target)
         if not full_id:
             await channel.send_message(
                 OutgoingMessage(
@@ -284,13 +280,10 @@ class BotServer:
             return
 
         # Save current session before switching
-        key = self._router._session_key(msg.channel, msg.conversation_id)
-        old_agent = self._router._sessions.get(key)
-        if old_agent:
-            try:
-                await old_agent.memory.save_memory()
-            except Exception:
-                logger.warning("Failed to save current session before resume", exc_info=True)
+        try:
+            await self._router.save_session(msg.channel, msg.conversation_id)
+        except Exception:
+            logger.warning("Failed to save current session before resume", exc_info=True)
 
         # Reset and create a new agent, then load the target session
         await self._router.reset_session(msg.channel, msg.conversation_id)

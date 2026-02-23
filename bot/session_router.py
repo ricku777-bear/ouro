@@ -54,7 +54,6 @@ class SessionRouter:
 
         # Persistent conversation map: conv_key -> session UUID
         self._conversation_map: dict[str, str] = {}
-        self._map_dirty = False
 
     def _session_key(self, channel: str, conversation_id: str) -> str:
         return f"{channel}:{conversation_id}"
@@ -96,12 +95,6 @@ class SessionRouter:
         async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
             await f.write(content)
         await asyncio.to_thread(os.replace, tmp_path, path)
-        self._map_dirty = False
-
-    async def flush_map(self) -> None:
-        """Save the conversation map if it has been modified."""
-        if self._map_dirty:
-            await self._save_conversation_map()
 
     # ---- Session lifecycle ---------------------------------------------------
 
@@ -157,7 +150,6 @@ class SessionRouter:
         old = self._conversation_map.get(key)
         if old != agent.memory.session_id:
             self._conversation_map[key] = agent.memory.session_id
-            self._map_dirty = True
             await self._save_conversation_map()
 
     def get_lock(self, channel: str, conversation_id: str) -> asyncio.Lock:
@@ -210,7 +202,6 @@ class SessionRouter:
         self._last_active.pop(key, None)
         if key in self._conversation_map:
             del self._conversation_map[key]
-            self._map_dirty = True
             await self._save_conversation_map()
         if existed:
             logger.info("Session reset for %s", key)
@@ -240,6 +231,13 @@ class SessionRouter:
             return False
         return lock.locked()
 
+    async def save_session(self, channel: str, conversation_id: str) -> None:
+        """Save the current agent's memory to disk (no-op if no session exists)."""
+        key = self._session_key(channel, conversation_id)
+        agent = self._sessions.get(key)
+        if agent:
+            await agent.memory.save_memory()
+
     async def list_persisted_sessions(self, limit: int = 20) -> list[dict[str, Any]]:
         """List persisted sessions from disk.
 
@@ -252,6 +250,19 @@ class SessionRouter:
         from memory.manager import MemoryManager
 
         return await MemoryManager.list_sessions(limit=limit, sessions_dir=self._sessions_dir)
+
+    async def find_session_by_prefix(self, prefix: str) -> str | None:
+        """Find a persisted session by ID prefix.
+
+        Args:
+            prefix: Prefix of session UUID.
+
+        Returns:
+            Full session ID, or None if not found.
+        """
+        from memory.manager import MemoryManager
+
+        return await MemoryManager.find_session_by_prefix(prefix, sessions_dir=self._sessions_dir)
 
     @property
     def active_session_count(self) -> int:

@@ -66,13 +66,7 @@ def get_history_file() -> str:
     return os.path.join(RUNTIME_DIR, "history")
 
 
-def get_bot_dir() -> str:
-    """Get the bot data directory path.
-
-    Returns:
-        Path to ~/.ouro/bot/
-    """
-    return os.path.join(RUNTIME_DIR, "bot")
+_BOT_DIR = os.path.join(RUNTIME_DIR, "bot")
 
 
 def get_bot_sessions_dir() -> str:
@@ -81,7 +75,7 @@ def get_bot_sessions_dir() -> str:
     Returns:
         Path to ~/.ouro/bot/sessions/
     """
-    return os.path.join(RUNTIME_DIR, "bot", "sessions")
+    return os.path.join(_BOT_DIR, "sessions")
 
 
 def get_bot_memory_dir() -> str:
@@ -90,7 +84,7 @@ def get_bot_memory_dir() -> str:
     Returns:
         Path to ~/.ouro/bot/memory/
     """
-    return os.path.join(RUNTIME_DIR, "bot", "memory")
+    return os.path.join(_BOT_DIR, "memory")
 
 
 def get_bot_skills_dir() -> str:
@@ -99,7 +93,7 @@ def get_bot_skills_dir() -> str:
     Returns:
         Path to ~/.ouro/bot/skills/
     """
-    return os.path.join(RUNTIME_DIR, "bot", "skills")
+    return os.path.join(_BOT_DIR, "skills")
 
 
 def ensure_bot_dirs() -> None:
@@ -110,9 +104,8 @@ def ensure_bot_dirs() -> None:
     - ~/.ouro/bot/memory/
     - ~/.ouro/bot/skills/
     """
-    os.makedirs(os.path.join(RUNTIME_DIR, "bot", "sessions"), exist_ok=True)
-    os.makedirs(os.path.join(RUNTIME_DIR, "bot", "memory"), exist_ok=True)
-    os.makedirs(os.path.join(RUNTIME_DIR, "bot", "skills"), exist_ok=True)
+    for subdir in ("sessions", "memory", "skills"):
+        os.makedirs(os.path.join(_BOT_DIR, subdir), exist_ok=True)
 
 
 def ensure_runtime_dirs(create_logs: bool = False) -> None:

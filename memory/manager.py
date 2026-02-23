@@ -65,8 +65,6 @@ class MemoryManager:
             memory_dir: Optional custom long-term memory directory (default: ~/.ouro/memory/)
         """
         self.llm = llm
-        self._sessions_dir = sessions_dir
-        self._memory_dir = memory_dir
 
         # Store is fully owned by MemoryManager
         from .store import YamlFileMemoryStore
