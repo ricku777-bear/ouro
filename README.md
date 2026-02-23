@@ -195,7 +195,7 @@ See [Bot Configuration](docs/configuration.md) for `BOT_HEARTBEAT_INTERVAL`, `BO
 - **Dual mode**: Interactive CLI with rich TUI + persistent IM bot (Lark, Slack) — same agent core, two deployment modes
 - **Unified agent loop**: Think-Act-Observe cycle — planning, sub-agents, and tool use all happen in one loop
 - **Self-verification**: Ralph Loop verifies the agent's answer against the original task and re-enters if incomplete (`--verify`)
-- **Parallel execution**: Concurrent readonly tool calls in a single turn, plus `multi_task` for spawning parallel sub-agents with dependency ordering
+- **Parallel execution**: Concurrent readonly tool calls in a single turn; legacy `multi_task`; and experimental Tasks graph orchestration (`TaskCreate/TaskUpdate/TaskList/TaskGet/TaskFanout/TaskDumpMd` + `sub_agent_batch`)
 - **Memory system**: LLM-driven compression, long-term memory, and YAML session persistence resumable across restarts
 - **Proactive mechanisms**: Heartbeat self-checks + cron-scheduled tasks, with results broadcast to active IM sessions
 - **Personality**: Customizable soul file (`~/.ouro/bot/soul.md`) defines bot identity and tone
@@ -228,6 +228,7 @@ See [Configuration Guide](docs/configuration.md) for all settings.
 - [Configuration](docs/configuration.md) -- model setup, runtime settings, custom endpoints
 - [Examples](docs/examples.md) -- usage patterns and programmatic API
 - [Memory Management](docs/memory-management.md) -- compression, persistence, token tracking
+- [Tasks Orchestration (Experimental)](docs/tasks-subagents.md) -- task graph model, sub-agent flow, and runtime policies
 - [Extending](docs/extending.md) -- adding tools, agents, LLM providers
 - [Packaging](docs/packaging.md) -- building, publishing, Docker
 
