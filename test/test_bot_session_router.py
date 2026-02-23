@@ -64,29 +64,11 @@ async def test_same_conversation_gets_same_lock():
     assert lock1 is lock2
 
 
-async def test_cleanup_idle_sessions():
-    router = SessionRouter(agent_factory=_mock_agent_factory, idle_timeout=0.0)
-
-    await router.get_or_create_agent("feishu", "chat_123")
-    await router.get_or_create_agent("feishu", "chat_456")
-    assert router.active_session_count == 2
-
-    # With idle_timeout=0.0, all sessions are immediately idle
-    removed = router.cleanup_idle_sessions()
-    assert removed == 2
-    assert router.active_session_count == 0
-
-
-async def test_cleanup_preserves_active_sessions():
-    router = SessionRouter(agent_factory=_mock_agent_factory, idle_timeout=3600.0)
-
-    await router.get_or_create_agent("feishu", "chat_123")
-    assert router.active_session_count == 1
-
-    # With a 1-hour timeout, nothing should be cleaned up
-    removed = router.cleanup_idle_sessions()
+async def test_cleanup_stale_sessions_no_sessions_dir():
+    """cleanup_stale_sessions is a no-op without sessions_dir."""
+    router = SessionRouter(agent_factory=_mock_agent_factory)
+    removed = await router.cleanup_stale_sessions()
     assert removed == 0
-    assert router.active_session_count == 1
 
 
 async def test_lock_serializes_access():

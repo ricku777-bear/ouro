@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from typing import Any
 
 import aiofiles
@@ -16,10 +17,10 @@ from agent.agent import LoopAgent
 
 logger = logging.getLogger(__name__)
 
-# Default idle timeout: 1 hour
-_DEFAULT_IDLE_TIMEOUT = 3600.0
-
 _CONVERSATION_MAP_FILE = "conversation_map.yaml"
+
+# Default threshold for disk-level session cleanup (days)
+_DEFAULT_STALE_DAYS = 30
 
 
 class SessionRouter:
@@ -36,17 +37,14 @@ class SessionRouter:
     def __init__(
         self,
         agent_factory: Callable[[], LoopAgent] | Callable[[], Awaitable[LoopAgent]],
-        idle_timeout: float = _DEFAULT_IDLE_TIMEOUT,
         sessions_dir: str | None = None,
     ) -> None:
         """
         Args:
             agent_factory: Callable that returns a (possibly awaitable) LoopAgent.
-            idle_timeout: Seconds of inactivity before a session is cleaned up.
             sessions_dir: Optional directory for session persistence and conversation map.
         """
         self._agent_factory = agent_factory
-        self._idle_timeout = idle_timeout
         self._sessions_dir = sessions_dir
         self._sessions: dict[str, LoopAgent] = {}
         self._locks: dict[str, asyncio.Lock] = {}
@@ -169,29 +167,54 @@ class SessionRouter:
             self._locks[key] = asyncio.Lock()
         return self._locks[key]
 
-    def cleanup_idle_sessions(self) -> int:
-        """Remove in-memory sessions that have been idle longer than the timeout.
+    async def cleanup_stale_sessions(self, max_age_days: int = _DEFAULT_STALE_DAYS) -> int:
+        """Delete persisted sessions that haven't been updated in *max_age_days*.
 
-        Conversation map entries are *kept* so sessions can resume after cleanup.
+        Also removes the corresponding conversation map entries.
 
         Returns:
-            Number of sessions removed.
+            Number of sessions deleted from disk.
         """
-        now = time.time()
-        expired_keys = [
-            key
-            for key, last_active in self._last_active.items()
-            if now - last_active > self._idle_timeout
-        ]
+        if not self._sessions_dir:
+            return 0
 
-        for key in expired_keys:
-            logger.info("Cleaning up idle session: %s", key)
-            self._sessions.pop(key, None)
-            self._locks.pop(key, None)
-            self._last_active.pop(key, None)
-            # Keep self._conversation_map[key] so next message resumes the session
+        from memory.store import YamlFileMemoryStore
 
-        return len(expired_keys)
+        store = YamlFileMemoryStore(sessions_dir=self._sessions_dir)
+        sessions = await store.list_sessions(limit=1000)
+
+        cutoff = datetime.now() - timedelta(days=max_age_days)
+        deleted = 0
+        map_changed = False
+
+        for s in sessions:
+            updated_str = s.get("updated_at", "")
+            if not updated_str:
+                continue
+            try:
+                updated_at = datetime.fromisoformat(updated_str)
+            except (ValueError, TypeError):
+                continue
+            if updated_at >= cutoff:
+                continue
+
+            session_id = s["id"]
+            if await store.delete_session(session_id):
+                deleted += 1
+                logger.info(
+                    "Deleted stale session %s (updated %s)", session_id[:8], updated_str[:10]
+                )
+
+            # Remove any conversation map entries pointing to this session
+            stale_keys = [k for k, v in self._conversation_map.items() if v == session_id]
+            for k in stale_keys:
+                del self._conversation_map[k]
+                map_changed = True
+
+        if map_changed:
+            await self._save_conversation_map()
+
+        return deleted
 
     async def reset_session(self, channel: str, conversation_id: str) -> bool:
         """Destroy the session for a conversation. Returns True if a session existed."""

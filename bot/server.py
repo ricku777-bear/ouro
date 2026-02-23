@@ -19,8 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Periodic cleanup interval for idle sessions (seconds)
-_CLEANUP_INTERVAL = 300.0
+# Periodic cleanup interval for stale sessions on disk (seconds, 6 hours)
+_CLEANUP_INTERVAL = 21600.0
 
 
 def _format_duration(seconds: float) -> str:
@@ -497,15 +497,15 @@ class BotServer:
                 logger.exception("Failed to send error message")
 
     async def _periodic_cleanup(self) -> None:
-        """Periodically clean up idle sessions."""
+        """Periodically delete stale sessions from disk."""
         while True:
             await asyncio.sleep(_CLEANUP_INTERVAL)
             try:
-                removed = self._router.cleanup_idle_sessions()
+                removed = await self._router.cleanup_stale_sessions()
                 if removed > 0:
-                    logger.info("Cleaned up %d idle sessions", removed)
+                    logger.info("Cleaned up %d stale sessions from disk", removed)
             except Exception:
-                logger.exception("Error during session cleanup")
+                logger.exception("Error during stale session cleanup")
 
     async def start(self, host: str, port: int) -> None:
         """Start channels + health server, block until cancelled."""
