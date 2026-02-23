@@ -212,15 +212,6 @@ async def test_sub_agent_batch_includes_simplified_context_and_upstream_outputs(
     )
     tid = created["task"]["id"]
 
-    call_names: list[str] = []
-    original_execute_tool_call = executor.execute_tool_call
-
-    async def _record_execute_tool_call(tool_name: str, params: dict):
-        call_names.append(tool_name)
-        return await original_execute_tool_call(tool_name, params)
-
-    executor.execute_tool_call = _record_execute_tool_call  # type: ignore[method-assign]
-
     result = json.loads(
         await tool.execute(runs=[{"taskId": tid, "notes": "只分析《海贼王》的角色"}])
     )
@@ -229,7 +220,6 @@ async def test_sub_agent_batch_includes_simplified_context_and_upstream_outputs(
     assert upstream_id in result["results"][0]["upstreamIncluded"]
     assert result["results"][0]["upstreamIncludedCount"] == 1
     assert result["results"][0]["sharedContextChars"] > 0
-    assert "TaskGetMany" in call_names
     assert agent.last_prompt is not None
     assert "<shared_context>" in agent.last_prompt
     assert "<conversation>" in agent.last_prompt

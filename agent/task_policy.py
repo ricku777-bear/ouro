@@ -24,6 +24,18 @@ class TaskPolicy:
     def __init__(self, agent: LoopAgent):
         self.agent = agent
 
+    def _task_store(self):
+        return getattr(self.agent, "task_store", None)
+
+    async def _list_tasks_or_none(self):
+        store = self._task_store()
+        if store is None:
+            return None
+        try:
+            return await store.list_tasks()
+        except Exception:
+            return None
+
     def extract_task_dump_md_request(self, task: str) -> tuple[str, bool] | None:
         """Parse explicit TaskDumpMd(path=..., includeDebug=...) user request."""
         if "TaskDumpMd" not in task:
@@ -48,7 +60,7 @@ class TaskPolicy:
         return (path_value, include_debug)
 
     async def auto_dump_tasks_md_if_requested(self, task: str) -> None:
-        store = getattr(self.agent, "task_store", None)
+        store = self._task_store()
         if store is None:
             return
 
@@ -57,10 +69,7 @@ class TaskPolicy:
             return
         path_value, include_debug = request
 
-        try:
-            tasks = await store.list_tasks()
-        except Exception:
-            return
+        tasks = await self._list_tasks_or_none()
         if not tasks:
             return
 
@@ -73,14 +82,7 @@ class TaskPolicy:
             logger.warning("Auto TaskDumpMd failed", exc_info=True)
 
     async def task_incomplete_summary(self) -> str | None:
-        store = getattr(self.agent, "task_store", None)
-        if store is None:
-            return None
-
-        try:
-            tasks = await store.list_tasks()
-        except Exception:
-            return None
+        tasks = await self._list_tasks_or_none()
         if not tasks:
             return None
 
@@ -128,14 +130,7 @@ class TaskPolicy:
 
     async def prefer_terminal_task_detail_result(self, result: str) -> str:
         """Prefer terminal task detail as final output when graph is fully complete."""
-        store = getattr(self.agent, "task_store", None)
-        if store is None:
-            return result
-
-        try:
-            tasks = await store.list_tasks()
-        except Exception:
-            return result
+        tasks = await self._list_tasks_or_none()
         if not tasks:
             return result
         if any(getattr(t, "status", None) != "completed" for t in tasks):

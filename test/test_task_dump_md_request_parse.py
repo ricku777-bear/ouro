@@ -1,18 +1,19 @@
-from agent.agent import LoopAgent
+from agent.task_policy import TaskPolicy
+
+
+def _parse(task: str):
+    return TaskPolicy(agent=object()).extract_task_dump_md_request(task)
 
 
 def test_extract_task_dump_md_request_parses_path_and_debug() -> None:
-    agent = LoopAgent.__new__(LoopAgent)
     task = '请在最后调用 TaskDumpMd(path=".tmp/tasks.md", includeDebug=true)。'
-    assert agent._extract_task_dump_md_request(task) == (".tmp/tasks.md", True)
+    assert _parse(task) == (".tmp/tasks.md", True)
 
 
 def test_extract_task_dump_md_request_parses_path_without_debug() -> None:
-    agent = LoopAgent.__new__(LoopAgent)
     task = "最后调用 TaskDumpMd(path='.tmp/tasks.md')"
-    assert agent._extract_task_dump_md_request(task) == (".tmp/tasks.md", False)
+    assert _parse(task) == (".tmp/tasks.md", False)
 
 
 def test_extract_task_dump_md_request_requires_path() -> None:
-    agent = LoopAgent.__new__(LoopAgent)
-    assert agent._extract_task_dump_md_request("最后调用 TaskDumpMd(includeDebug=true)") is None
+    assert _parse("最后调用 TaskDumpMd(includeDebug=true)") is None

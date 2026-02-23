@@ -92,17 +92,6 @@ class SubAgentBatchTool(BaseTool):
             },
         }
 
-    def to_anthropic_schema(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": {
-                "type": "object",
-                "properties": self.parameters,
-                "required": ["runs"],
-            },
-        }
-
     def _get_subagent_tools(self) -> list[dict[str, Any]]:
         all_tools = self.agent.tool_executor.get_tool_schemas()
 
@@ -154,20 +143,18 @@ class SubAgentBatchTool(BaseTool):
         return _truncate("\n".join(simplified).strip(), self.MAX_CONTEXT_CHARS)
 
     async def _get_task(self, task_id: str) -> dict[str, Any] | None:
-        raw = await self.agent.tool_executor.execute_tool_call("TaskGet", {"id": task_id})
-        try:
-            data = json.loads(raw)
-        except Exception:
+        store = getattr(self.agent, "task_store", None)
+        if store is None:
             return None
-        task = data.get("task") or {}
-        if not isinstance(task, dict):
+        task = await store.get(task_id)
+        if not task:
             return None
-        return task
+        return task.to_dict(include_detail=True)
 
     async def _collect_upstream_outputs(
         self, root_task: dict[str, Any]
     ) -> tuple[str, dict[str, Any]]:
-        """Collect completed direct dependency outputs using one TaskGetMany call."""
+        """Collect completed direct dependency outputs."""
         deps = [str(x).strip() for x in (root_task.get("blockedBy") or [])]
         deps = [d for d in deps if d][: self.MAX_UPSTREAM_TASKS]
         meta: dict[str, Any] = {
@@ -179,27 +166,22 @@ class SubAgentBatchTool(BaseTool):
         if not deps:
             return ("", meta)
 
-        raw = await self.agent.tool_executor.execute_tool_call("TaskGetMany", {"ids": deps})
-        try:
-            data = json.loads(raw)
-        except Exception:
-            return ("", meta)
-        tasks = data.get("tasks") or []
-        if not isinstance(tasks, list):
+        store = getattr(self.agent, "task_store", None)
+        if store is None:
             return ("", meta)
 
         collected: list[str] = []
-        for dep in tasks:
-            if not isinstance(dep, dict):
+        for dep_id in deps:
+            dep = await store.get(dep_id)
+            if not dep:
                 continue
-            status = str(dep.get("status", "") or "").strip()
-            detail = str(dep.get("detail", "") or "").strip()
-            dep_id = str(dep.get("id", "") or "").strip()
+            status = str(getattr(dep, "status", "") or "").strip()
+            detail = str(getattr(dep, "detail", "") or "").strip()
             if not dep_id or status != "completed" or not detail:
                 continue
             meta["upstreamIncluded"].append(dep_id)
             meta["upstreamIncludedDetailChars"] += len(detail)
-            content = str(dep.get("content", "") or "").strip() or f"(task {dep_id})"
+            content = str(getattr(dep, "content", "") or "").strip() or f"(task {dep_id})"
             detail = _truncate(detail, self.MAX_UPSTREAM_DETAIL_CHARS)
             collected.append(f"- [{dep_id}] {content}\n  {detail.replace('\\n', '\\n  ')}")
 
@@ -376,16 +358,11 @@ Execute now."""
                 if not task_id or not output:
                     continue
 
-                update_applied = False
-                if hasattr(store, "update"):
-                    try:
-                        await store.update(task_id, status="completed", detail=output)
-                        applied_updates.append(task_id)
-                        update_applied = True
-                    except Exception as e:
-                        update_errors.append({"id": task_id, "error": str(e)})
-
-                if (not update_applied) and hasattr(store, "stash_detail"):
+                try:
+                    await store.update(task_id, status="completed", detail=output)
+                    applied_updates.append(task_id)
+                except Exception as e:
+                    update_errors.append({"id": task_id, "error": str(e)})
                     with contextlib.suppress(Exception):
                         await store.stash_detail(task_id, output)
 

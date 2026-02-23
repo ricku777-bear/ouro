@@ -82,24 +82,6 @@ AGENTS.md is optional. If not found, proceed normally.
             self._task_policy_impl = policy
         return policy
 
-    # Backward-compatible wrappers (also used by existing tests).
-    def _extract_task_dump_md_request(self, task: str) -> tuple[str, bool] | None:
-        return self._task_policy().extract_task_dump_md_request(task)
-
-    async def _auto_dump_tasks_md_if_requested(self, task: str) -> None:
-        await self._task_policy().auto_dump_tasks_md_if_requested(task)
-
-    async def _task_incomplete_summary(self) -> str | None:
-        return await self._task_policy().task_incomplete_summary()
-
-    async def _enforce_tasks_completed(self, *, tools: list, task: str, result: str) -> str:
-        return await self._task_policy().enforce_tasks_completed(
-            tools=tools, task=task, result=result
-        )
-
-    async def _prefer_terminal_task_detail_result(self, result: str) -> str:
-        return await self._task_policy().prefer_terminal_task_detail_result(result)
-
     async def run(self, task: str, verify: bool = False) -> str:
         """Execute ReAct loop until task is complete.
 
@@ -159,6 +141,7 @@ AGENTS.md is optional. If not found, proceed normally.
 
         tools = self.tool_executor.get_tool_schemas()
         self.memory.set_tool_schemas(tools)
+        task_policy = self._task_policy()
 
         if verify:
             # Use ralph loop (outer verification wrapping the inner ReAct loop)
@@ -180,8 +163,8 @@ AGENTS.md is optional. If not found, proceed normally.
                 task=task,
             )
 
-        result = await self._enforce_tasks_completed(tools=tools, task=task, result=result)
-        preferred_result = await self._prefer_terminal_task_detail_result(result)
+        result = await task_policy.enforce_tasks_completed(tools=tools, task=task, result=result)
+        preferred_result = await task_policy.prefer_terminal_task_detail_result(result)
         if preferred_result != result:
             # Keep persisted conversation consistent with the returned final output.
             await self.memory.add_message(LLMMessage(role="assistant", content=preferred_result))
@@ -189,7 +172,7 @@ AGENTS.md is optional. If not found, proceed normally.
 
         # Best-effort: if the user explicitly asked to call TaskDumpMd(path=..., includeDebug=...),
         # ensure we produce a final on-disk snapshot even if the LLM forgot or dumped too early.
-        await self._auto_dump_tasks_md_if_requested(task)
+        await task_policy.auto_dump_tasks_md_if_requested(task)
 
         self._print_memory_stats()
 

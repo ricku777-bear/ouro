@@ -425,11 +425,6 @@ def _compute_blocks_unlocked(tasks: list[TaskRecord]) -> dict[str, list[str]]:
     return blocks
 
 
-def compute_blocks(tasks: list[TaskRecord]) -> dict[str, list[str]]:
-    """Public helper for reverse edge computation (tool/UI serialization)."""
-    return _compute_blocks_unlocked(list(tasks))
-
-
 def _available_ids_unlocked(tasks: dict[str, TaskRecord]) -> list[str]:
     out: list[str] = []
     for t in sorted(tasks.values(), key=_task_sort_key):

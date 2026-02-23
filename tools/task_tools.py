@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import os
 from typing import Any
@@ -15,7 +16,7 @@ from typing import Any
 import aiofiles
 import aiofiles.os
 
-from agent.tasks import TaskStore, _normalize_task_id, compute_blocks
+from agent.tasks import TaskStore, _normalize_task_id
 from tools.base import BaseTool
 
 
@@ -97,10 +98,7 @@ def _build_update_debug_entry(task_dict: dict[str, Any], detail_text: str) -> di
 
 
 async def _graph_snapshot(store: TaskStore) -> tuple[list[Any], dict[str, list[str]], list[str]]:
-    if hasattr(store, "graph_snapshot"):
-        return await store.graph_snapshot()
-    tasks = await store.list_tasks()
-    return tasks, compute_blocks(tasks), await store.available_ids()
+    return await store.graph_snapshot()
 
 
 async def _render_sections(store: TaskStore) -> dict[str, str]:
@@ -108,6 +106,21 @@ async def _render_sections(store: TaskStore) -> dict[str, str]:
         "tasksMd": await store.render_tasks_md(),
         "debugTasksMd": await store.render_debug_tasks_md(),
     }
+
+
+async def _with_render(store: TaskStore, payload: dict[str, Any]) -> dict[str, Any]:
+    payload.update(await _render_sections(store))
+    return payload
+
+
+def _truncate_task_detail_inplace(task_dict: dict[str, Any], limit: int) -> None:
+    if not (isinstance(task_dict.get("detail"), str) and task_dict.get("detail")):
+        return
+    truncated, was_truncated, total = _truncate(task_dict["detail"], limit)
+    task_dict["detail"] = truncated
+    if was_truncated:
+        task_dict["detailTruncated"] = True
+        task_dict["detailTotalChars"] = total
 
 
 async def _read_tasks_payload(
@@ -141,20 +154,84 @@ async def _read_tasks_payload(
         "available": available,
     }
     if include_render:
-        payload.update(await _render_sections(store))
+        return await _with_render(store, payload)
     return payload
 
 
-class TaskFanoutTool(BaseTool):
+def _task_update_field_properties() -> dict[str, Any]:
+    return copy.deepcopy(
+        {
+            "content": {
+                "type": "string",
+                "description": "New imperative description",
+                "default": None,
+            },
+            "activeForm": {
+                "type": "string",
+                "description": "New present continuous form",
+                "default": None,
+            },
+            "detail": {
+                "type": "string",
+                "description": "Long-form detail/result",
+                "default": None,
+            },
+            "replaceDetail": {
+                "type": "boolean",
+                "description": "If true, overwrite any existing detail. If false (default), append non-empty detail.",
+                "default": False,
+            },
+            "status": {
+                "type": "string",
+                "description": "New status: pending, in_progress, completed",
+                "default": None,
+            },
+            "blockedBy": {
+                "type": "array",
+                "description": "Replace dependencies",
+                "items": {"type": "string"},
+                "default": None,
+            },
+            "addBlockedBy": {
+                "type": "array",
+                "description": "Add dependencies",
+                "items": {"type": "string"},
+                "default": None,
+            },
+            "removeBlockedBy": {
+                "type": "array",
+                "description": "Remove dependencies",
+                "items": {"type": "string"},
+                "default": None,
+            },
+            "addBlocks": {
+                "type": "array",
+                "description": "Add reverse edges: this task blocks those task ids",
+                "items": {"type": "string"},
+                "default": None,
+            },
+            "removeBlocks": {
+                "type": "array",
+                "description": "Remove reverse edges: this task no longer blocks those ids",
+                "items": {"type": "string"},
+                "default": None,
+            },
+        }
+    )
+
+
+class _TaskStoreBackedTool(BaseTool):
+    def __init__(self, store: TaskStore):
+        self._store = store
+
+
+class TaskFanoutTool(_TaskStoreBackedTool):
     """Create child tasks for a phase and (optionally) rewrite a join task's dependencies.
 
     This is a convenience tool to avoid a common orchestration pitfall:
     creating a "container/phase" task and separate leaf tasks, but forgetting to
     update the downstream join task's blockedBy to depend on the leaf tasks.
     """
-
-    def __init__(self, store: TaskStore):
-        self._store = store
 
     @property
     def name(self) -> str:
@@ -381,16 +458,16 @@ class TaskFanoutTool(BaseTool):
                     ],
                 }
             )
-            payload.update(await _render_sections(self._store))
+            return _json(await _with_render(self._store, payload))
 
         return _json(payload)
 
 
-class TaskDumpMdTool(BaseTool):
+class TaskDumpMdTool(_TaskStoreBackedTool):
     """Persist a human-readable tasks.md snapshot to disk."""
 
     def __init__(self, store: TaskStore):
-        self._store = store
+        super().__init__(store)
         self._dump_lock = asyncio.Lock()
 
     @property
@@ -464,7 +541,7 @@ class TaskDumpMdTool(BaseTool):
         )
 
 
-class TaskCreateTool(BaseTool):
+class TaskCreateTool(_TaskStoreBackedTool):
     """Create a task node."""
 
     @property
@@ -487,9 +564,6 @@ Guidelines:
 - Avoid redundant parent+child tasks that repeat the same work: if you create a parent like "Analyze Top N items" and also create N leaf analyses, the parent should add reusable value (e.g., normalize the input list, define evaluation dimensions, or record shared constraints in `detail`). Otherwise omit the parent and fan out directly.
 - If you already have an identify task that produced the concrete item list, you can fan out directly from that identify task (using TaskFanout with phaseId=identifyId) and skip creating an extra phase task.
 - For "analyze Top N items" requests: create N leaf tasks + 1 join task, with join blockedBy the N leaf tasks (TaskFanout can help)."""
-
-    def __init__(self, store: TaskStore):
-        self._store = store
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -539,18 +613,12 @@ Guidelines:
         )
         _, blocks, available = await _graph_snapshot(self._store)
         task_dict = task.to_dict(blocks=blocks.get(task.id, []), include_detail=True)
-        if isinstance(task_dict.get("detail"), str) and task_dict.get("detail"):
-            truncated, was_truncated, total = _truncate(task_dict["detail"], 8000)
-            task_dict["detail"] = truncated
-            if was_truncated:
-                task_dict["detailTruncated"] = True
-                task_dict["detailTotalChars"] = total
+        _truncate_task_detail_inplace(task_dict, _DETAIL_RETURN_MAX_CHARS)
         payload = {"task": task_dict, "available": available}
-        payload.update(await _render_sections(self._store))
-        return _json(payload)
+        return _json(await _with_render(self._store, payload))
 
 
-class TaskUpdateTool(BaseTool):
+class TaskUpdateTool(_TaskStoreBackedTool):
     """Update a task node and/or its dependencies."""
 
     @property
@@ -581,11 +649,35 @@ Notes on dependency fields:
 Tool response:
 - For single-task updates (id=...), the response includes the updated task's long-form `detail` (bounded/truncated when very large)."""
 
-    def __init__(self, store: TaskStore):
-        self._store = store
-
     @property
     def parameters(self) -> dict[str, Any]:
+        update_fields = _task_update_field_properties()
+        batch_item_properties = {
+            "id": {"type": "string", "description": "Task id"},
+            **update_fields,
+        }
+        top_level_fields = _task_update_field_properties()
+        top_level_fields["content"]["description"] = "New imperative description (optional)"
+        top_level_fields["activeForm"]["description"] = "New present continuous form (optional)"
+        top_level_fields["detail"][
+            "description"
+        ] = "Long-form detail/result (optional; does not change the task title)"
+        top_level_fields["replaceDetail"][
+            "description"
+        ] = "If true, overwrite any existing detail. If false (default), new non-empty detail is appended to existing detail (never clears)."
+        top_level_fields["status"][
+            "description"
+        ] = "New status: pending, in_progress, completed (optional)"
+        top_level_fields["blockedBy"]["description"] = "Replace dependencies (optional)"
+        top_level_fields["addBlockedBy"]["description"] = "Add dependencies (optional)"
+        top_level_fields["removeBlockedBy"]["description"] = "Remove dependencies (optional)"
+        top_level_fields["addBlocks"][
+            "description"
+        ] = "Add reverse edges: this task blocks those task ids (optional)"
+        top_level_fields["removeBlocks"][
+            "description"
+        ] = "Remove reverse edges: this task no longer blocks those ids (optional)"
+
         return {
             "id": {
                 "type": "string",
@@ -597,123 +689,12 @@ Tool response:
                 "description": "Batch updates (optional): list of task update objects",
                 "items": {
                     "type": "object",
-                    "properties": {
-                        "id": {"type": "string", "description": "Task id"},
-                        "content": {
-                            "type": "string",
-                            "description": "New imperative description",
-                            "default": None,
-                        },
-                        "activeForm": {
-                            "type": "string",
-                            "description": "New present continuous form",
-                            "default": None,
-                        },
-                        "detail": {
-                            "type": "string",
-                            "description": "Long-form detail/result",
-                            "default": None,
-                        },
-                        "replaceDetail": {
-                            "type": "boolean",
-                            "description": "If true, overwrite any existing detail. If false (default), append non-empty detail.",
-                            "default": False,
-                        },
-                        "status": {
-                            "type": "string",
-                            "description": "New status: pending, in_progress, completed",
-                            "default": None,
-                        },
-                        "blockedBy": {
-                            "type": "array",
-                            "description": "Replace dependencies",
-                            "items": {"type": "string"},
-                            "default": None,
-                        },
-                        "addBlockedBy": {
-                            "type": "array",
-                            "description": "Add dependencies",
-                            "items": {"type": "string"},
-                            "default": None,
-                        },
-                        "removeBlockedBy": {
-                            "type": "array",
-                            "description": "Remove dependencies",
-                            "items": {"type": "string"},
-                            "default": None,
-                        },
-                        "addBlocks": {
-                            "type": "array",
-                            "description": "Add reverse edges: this task blocks those task ids",
-                            "items": {"type": "string"},
-                            "default": None,
-                        },
-                        "removeBlocks": {
-                            "type": "array",
-                            "description": "Remove reverse edges: this task no longer blocks those ids",
-                            "items": {"type": "string"},
-                            "default": None,
-                        },
-                    },
+                    "properties": batch_item_properties,
                     "required": ["id"],
                 },
                 "default": None,
             },
-            "content": {
-                "type": "string",
-                "description": "New imperative description (optional)",
-                "default": None,
-            },
-            "activeForm": {
-                "type": "string",
-                "description": "New present continuous form (optional)",
-                "default": None,
-            },
-            "detail": {
-                "type": "string",
-                "description": "Long-form detail/result (optional; does not change the task title)",
-                "default": None,
-            },
-            "replaceDetail": {
-                "type": "boolean",
-                "description": "If true, overwrite any existing detail. If false (default), new non-empty detail is appended to existing detail (never clears).",
-                "default": False,
-            },
-            "status": {
-                "type": "string",
-                "description": "New status: pending, in_progress, completed (optional)",
-                "default": None,
-            },
-            "blockedBy": {
-                "type": "array",
-                "description": "Replace dependencies (optional)",
-                "items": {"type": "string"},
-                "default": None,
-            },
-            "addBlockedBy": {
-                "type": "array",
-                "description": "Add dependencies (optional)",
-                "items": {"type": "string"},
-                "default": None,
-            },
-            "removeBlockedBy": {
-                "type": "array",
-                "description": "Remove dependencies (optional)",
-                "items": {"type": "string"},
-                "default": None,
-            },
-            "addBlocks": {
-                "type": "array",
-                "description": "Add reverse edges: this task blocks those task ids (optional)",
-                "items": {"type": "string"},
-                "default": None,
-            },
-            "removeBlocks": {
-                "type": "array",
-                "description": "Remove reverse edges: this task no longer blocks those ids (optional)",
-                "items": {"type": "string"},
-                "default": None,
-            },
+            **top_level_fields,
         }
 
     async def execute(
@@ -815,8 +796,7 @@ Tool response:
                 "updateDebug": update_debug,
                 "available": available,
             }
-            payload.update(await _render_sections(self._store))
-            return _json(payload)
+            return _json(await _with_render(self._store, payload))
 
         if id is None:
             raise ValueError("TaskUpdate requires either id=... or updates=[...]")
@@ -845,23 +825,16 @@ Tool response:
         # For single-task updates, include the task's long-form detail (bounded) so downstream steps
         # can reliably reuse it via the tool result (not only via TaskGet).
         task_dict = updated.to_dict(blocks=blocks3.get(updated.id, []), include_detail=True)
-        detail_max = _DETAIL_RETURN_MAX_CHARS
-        if isinstance(task_dict.get("detail"), str) and task_dict.get("detail"):
-            truncated, was_truncated, total = _truncate(task_dict["detail"], detail_max)
-            task_dict["detail"] = truncated
-            if was_truncated:
-                task_dict["detailTruncated"] = True
-                task_dict["detailTotalChars"] = total
+        _truncate_task_detail_inplace(task_dict, _DETAIL_RETURN_MAX_CHARS)
 
         update_debug = _build_update_debug_entry(
             task_dict, str(getattr(updated, "detail", "") or "")
         )
         payload = {"task": task_dict, "updateDebug": update_debug, "available": available}
-        payload.update(await _render_sections(self._store))
-        return _json(payload)
+        return _json(await _with_render(self._store, payload))
 
 
-class TaskListTool(BaseTool):
+class TaskListTool(_TaskStoreBackedTool):
     """List tasks."""
 
     readonly = True
@@ -877,9 +850,6 @@ class TaskListTool(BaseTool):
             "Use this to confirm there are no pending/in_progress tasks left before finishing."
         )
 
-    def __init__(self, store: TaskStore):
-        self._store = store
-
     @property
     def parameters(self) -> dict[str, Any]:
         return {}
@@ -892,11 +862,10 @@ class TaskListTool(BaseTool):
             ],
             "available": available,
         }
-        payload.update(await _render_sections(self._store))
-        return _json(payload)
+        return _json(await _with_render(self._store, payload))
 
 
-class TaskGetTool(BaseTool):
+class TaskGetTool(_TaskStoreBackedTool):
     """Get a single task by id."""
 
     readonly = True
@@ -911,9 +880,6 @@ class TaskGetTool(BaseTool):
             "Get a single task by id (includes long-form detail when present). "
             "If you need multiple tasks' details, prefer TaskGetMany(ids=[...]) to reduce tool calls."
         )
-
-    def __init__(self, store: TaskStore):
-        self._store = store
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -941,7 +907,7 @@ class TaskGetTool(BaseTool):
         )
 
 
-class TaskGetManyTool(BaseTool):
+class TaskGetManyTool(_TaskStoreBackedTool):
     """Get multiple tasks by ids."""
 
     readonly = True
@@ -956,9 +922,6 @@ class TaskGetManyTool(BaseTool):
             "Get multiple tasks by id (each includes long-form detail when present). "
             "Use this to fetch N leaf task outputs for a join/summarization step in one call."
         )
-
-    def __init__(self, store: TaskStore):
-        self._store = store
 
     @property
     def parameters(self) -> dict[str, Any]:
