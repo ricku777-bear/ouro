@@ -14,7 +14,18 @@ Ouro is derived from Ouroboros—the ancient symbol of a serpent consuming its o
 
 At Ouro AI Lab, this is our blueprint. We are building the next generation of AI agents capable of autonomous evolution—systems that learn from their own outputs, refine their own logic, and achieve a state of infinite self-improvement.
 
-## Installation
+## Two Modes, One Agent
+
+Ouro ships with a unified agent core and two deployment modes:
+
+| | **CLI Mode** | **Bot Mode** |
+|---|---|---|
+| **What** | Interactive REPL + one-shot task execution | Persistent IM assistant (Lark, Slack) |
+| **Install** | `pip install ouro-ai` | `pip install ouro-ai[bot]` |
+| **Run** | `ouro` | `ouro --bot` |
+| **Guide** | [CLI Guide](docs/cli-guide.md) | [Bot Guide](docs/bot-guide.md) |
+
+## Quick Start
 
 Prerequisites: Python 3.12+.
 
@@ -22,173 +33,30 @@ Prerequisites: Python 3.12+.
 pip install ouro-ai
 ```
 
-Or install from source (for development):
-
-```bash
-git clone https://github.com/ouro-ai-labs/ouro.git
-cd ouro
-./scripts/bootstrap.sh   # requires uv
-```
-
-## Quick Start
-
-### 1. Configure Models
-
-On first run, `~/.ouro/models.yaml` is created with a template. Edit it to add your provider and API key:
+On first run, `~/.ouro/models.yaml` is created. Add your API key:
 
 ```yaml
 models:
   openai/gpt-4o:
     api_key: sk-...
-
-  anthropic/claude-sonnet-4:
-    api_key: sk-ant-...
-
-  chatgpt/gpt-5.2-codex:
-    timeout: 600
-
-  ollama/llama2:
-    api_base: http://localhost:11434
-
 default: openai/gpt-4o
 current: openai/gpt-4o
 ```
 
-For `chatgpt/*` subscription models, run `ouro --login` (or `/login` in interactive mode) and select provider before use.
-OAuth models shown in `/model` are seeded from ouro's bundled catalog (synced from pi-ai `openai-codex` model list).
-Maintainer note: refresh this catalog via `python scripts/update_oauth_model_catalog.py`.
-Login uses a browser-based OAuth (PKCE) flow with a localhost callback server. If browser auto-open fails, ouro prints a URL you can open manually (for remote machines, SSH port-forwarding may be required).
-Advanced OAuth overrides (rarely needed) are documented in `docs/configuration.md`.
-
-See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for the full list.
-
-### 2. Run
+Then run:
 
 ```bash
 # Interactive mode
 ouro
 
-# Single task (returns raw result)
+# Single task
 ouro --task "Calculate 123 * 456"
 
-# Resume last session
-ouro --resume
-
-# Resume specific session (ID prefix)
-ouro --resume a1b2c3d4
-```
-
-## CLI Reference
-
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--task TEXT` | `-t` | Run a single task and exit |
-| `--model ID` | `-m` | LiteLLM model ID to use |
-| `--resume [ID]` | `-r` | Resume a session (`latest` if no ID given) |
-| `--login` | - | Open OAuth provider selector and login |
-| `--logout` | - | Open OAuth provider selector and logout |
-| `--verify` | | Enable self-verification (Ralph Loop) in `--task` mode |
-| `--reasoning-effort LEVEL` | - | Set run-scoped reasoning effort (`default|none|minimal|low|medium|high|xhigh|off`) |
-| `--verbose` | `-v` | Enable verbose logging to `~/.ouro/logs/` |
-
-## Interactive Commands
-
-### Slash Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show help |
-| `/reset` | Clear conversation and start fresh |
-| `/stats` | Show memory and token usage statistics |
-| `/resume [id]` | List or resume a previous session |
-| `/model` | Pick a model (arrow keys + Enter) |
-| `/model edit` | Open `~/.ouro/models.yaml` in editor (auto-reload on save) |
-| `/login` | Open OAuth provider selector and login |
-| `/logout` | Open OAuth provider selector and logout |
-| `/theme` | Toggle dark/light theme |
-| `/verbose` | Toggle thinking display |
-| `/reasoning` | Open reasoning menu |
-| `/compact` | Trigger memory compression and show token savings |
-| `/exit` | Exit (also `/quit`) |
-
-### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `/` | Command autocomplete |
-| `Ctrl+C` | Graceful interrupt (cancels current operation, rolls back incomplete memory) |
-| `Ctrl+L` | Clear screen |
-| `Ctrl+T` | Toggle thinking display |
-| `Ctrl+S` | Show quick stats |
-| Up/Down | Navigate command history |
-## Bot Mode (IM Assistant)
-
-Run ouro as a persistent IM bot — message it from Lark or Slack, get agent responses. No public URL needed; the bot uses outbound long connections (WebSocket / Socket Mode).
-
-Bot data is isolated under `~/.ouro/bot/` (sessions, memory, skills) so it never conflicts with interactive or task mode.
-
-### Install
-
-```bash
-pip install ouro-ai[bot]
-```
-
-### Quick Start
-
-Add credentials to `~/.ouro/config`:
-
-```
-# Lark
-LARK_APP_ID=cli_xxx
-LARK_APP_SECRET=xxx
-
-# Slack
-SLACK_BOT_TOKEN=xoxb-xxx
-SLACK_APP_TOKEN=xapp-xxx
-```
-
-```bash
+# Bot mode (requires ouro-ai[bot])
 ouro --bot
 ```
 
-### Session Persistence
-
-Bot conversations are automatically saved to disk and resumed across restarts. Each IM conversation gets its own session, mapped via `~/.ouro/bot/sessions/conversation_map.yaml`.
-
-Commands (send as a message to the bot):
-
-| Command | Description |
-|---------|-------------|
-| `/new` or `/reset` | Start a fresh session |
-| `/sessions list` | List all saved sessions |
-| `/sessions resume <id>` | Switch to a previous session |
-| `/compact` | Compress conversation memory to save tokens |
-| `/status` | Show session statistics (age, messages, tokens, compressions) |
-| `/heartbeat` | Show heartbeat status (interval, last run, next run) |
-| `/cron list` | List all scheduled cron jobs |
-| `/cron add <schedule> <prompt>` | Create a new cron job |
-| `/cron remove <id>` | Delete a cron job |
-| `/help` | List all available commands |
-
-Sessions untouched for 30 days are automatically cleaned up.
-
-### Proactive Mechanisms
-
-The bot can act on its own between conversations:
-
-- **Heartbeat**: Periodic self-checks — the agent runs through a checklist and broadcasts results to active IM sessions when action is needed.
-- **Cron**: Schedule recurring or one-time tasks via cron expressions, second intervals, or one-time ISO timestamps.
-
-See [Bot Configuration](docs/configuration.md) for `BOT_HEARTBEAT_INTERVAL`, `BOT_ACTIVE_HOURS_*`, and other settings.
-
-### Personality
-
-`~/.ouro/bot/soul.md` defines the bot's identity and tone. It is injected into the agent's system prompt for all bot sessions. A default template is created automatically on first launch — edit it to customize your bot's personality.
-
-### Platform Guides
-
-- [Lark (Feishu) Setup](bot/LARK.md)
-- [Slack Setup](bot/SLACK.md)
+See [LiteLLM Providers](https://docs.litellm.ai/docs/providers) for the full provider list.
 
 ## Features
 
@@ -219,12 +87,10 @@ export OURO_API_KEY=<your-api-key>
 
 Extra flags are forwarded to `harbor run`, so any Harbor CLI option works. See [ouro_harbor/README.md](ouro_harbor/README.md) for full details.
 
-## Configuration
-
-See [Configuration Guide](docs/configuration.md) for all settings.
-
 ## Documentation
 
+- **[CLI Guide](docs/cli-guide.md)** -- interactive mode, task mode, commands, shortcuts
+- **[Bot Guide](docs/bot-guide.md)** -- IM bot setup, commands, proactive mechanisms, personality
 - [Configuration](docs/configuration.md) -- model setup, runtime settings, custom endpoints
 - [Examples](docs/examples.md) -- usage patterns and programmatic API
 - [Memory Management](docs/memory-management.md) -- compression, persistence, token tracking
@@ -235,7 +101,13 @@ See [Configuration Guide](docs/configuration.md) for all settings.
 
 Contributions are welcome! Please open an [issue](https://github.com/ouro-ai-labs/ouro/issues) or submit a pull request.
 
-For development setup, see the [Installation](#installation) section (install from source).
+For development setup, see the [Quick Start](#quick-start) section (install from source):
+
+```bash
+git clone https://github.com/ouro-ai-labs/ouro.git
+cd ouro
+./scripts/bootstrap.sh   # requires uv
+```
 
 ## License
 
