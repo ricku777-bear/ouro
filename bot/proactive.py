@@ -84,7 +84,6 @@ def _has_checklist_items(text: str) -> bool:
     return any(line.strip().startswith("- [ ] ") for line in text.splitlines())
 
 
-
 # ---------------------------------------------------------------------------
 # IsolatedAgentRunner — isolated execution + broadcast
 # ---------------------------------------------------------------------------
