@@ -26,6 +26,7 @@ class FakeChannel:
 
     def __init__(self):
         self.sent_messages: list[OutgoingMessage] = []
+        self.sent_files: list[dict] = []
         self._callback = None
         self._started = False
         self._stopped = False
@@ -40,6 +41,25 @@ class FakeChannel:
 
     async def send_message(self, message: OutgoingMessage) -> None:
         self.sent_messages.append(message)
+
+    async def send_file(
+        self,
+        conversation_id: str,
+        file_path: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+    ) -> bool:
+        self.sent_files.append(
+            {
+                "conversation_id": conversation_id,
+                "file_path": file_path,
+                "file_bytes": file_bytes,
+                "filename": filename,
+                "mime_type": mime_type,
+            }
+        )
+        return True
 
     async def inject_message(self, msg: IncomingMessage) -> None:
         """Simulate an incoming message from the IM platform."""
@@ -357,3 +377,63 @@ async def test_command_case_insensitive(bot_server, fake_channel, mock_router):
     await bot_server._process_message(fake_channel, _make_msg("/NEW"))
 
     assert "Session reset" in fake_channel.sent_messages[0].text
+
+
+# ---------------------------------------------------------------------------
+# File attachment processing tests
+# ---------------------------------------------------------------------------
+
+
+async def test_process_message_with_file_augments_text(bot_server, fake_channel, mock_router):
+    """Incoming file attachments are saved to disk and text is augmented."""
+    from bot.channel.base import FileAttachment
+
+    msg = IncomingMessage(
+        channel="test",
+        conversation_id="conv_f",
+        user_id="user_1",
+        text="Here is a file",
+        message_id="msg_f",
+        files=[FileAttachment(data=b"hello", filename="test.txt", mime_type="text/plain")],
+    )
+
+    agent = await mock_router.get_or_create_agent("test", "conv_f")
+
+    await bot_server._process_message(fake_channel, msg)
+
+    # agent.run should have been called with augmented text
+    call_args = agent.run.call_args
+    task_text = call_args[0][0]
+    assert "Here is a file" in task_text
+    assert "[Attached file: test.txt (text/plain) saved at:" in task_text
+
+    # The temp dir should have been cleaned up
+    import re
+
+    m = re.search(r"saved at: (/[^\]]+)", task_text)
+    assert m is not None
+    import os
+
+    assert not os.path.exists(m.group(1))
+
+
+async def test_send_file_context_lifecycle(bot_server, fake_channel, mock_router):
+    """SendFileContext is set before agent.run() and cleared after."""
+    from tools.send_file_tool import SendFileContext
+
+    agent = await mock_router.get_or_create_agent("test", "conv_ctx")
+    ctx = SendFileContext()
+    agent._send_file_ctx = ctx
+
+    msg = IncomingMessage(
+        channel="test",
+        conversation_id="conv_ctx",
+        user_id="user_1",
+        text="hi",
+        message_id="msg_ctx",
+    )
+
+    await bot_server._process_message(fake_channel, msg)
+
+    # After processing, the context should be cleared
+    assert ctx._send_fn is None

@@ -15,7 +15,7 @@ from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.web.async_client import AsyncWebClient
 
-from bot.channel.base import ImageData, IncomingMessage, OutgoingMessage
+from bot.channel.base import FileAttachment, ImageData, IncomingMessage, OutgoingMessage
 
 if TYPE_CHECKING:
     from bot.channel.base import MessageCallback
@@ -113,16 +113,23 @@ class SlackChannel:
 
         text = (event.get("text") or "").strip()
 
-        # --- Download image attachments ---
+        # --- Download file attachments (images + other files) ---
         images: list[ImageData] = []
+        files: list[FileAttachment] = []
         for f in event.get("files", []):
             mime = f.get("mimetype", "")
+            url = f.get("url_private_download") or f.get("url_private", "")
+            if not url:
+                continue
             if mime.startswith("image/"):
-                url = f.get("url_private_download") or f.get("url_private", "")
-                if url:
-                    img_data = await self._download_file(url)
-                    if img_data:
-                        images.append(ImageData(data=img_data, mime_type=mime))
+                img_data = await self._download_file(url)
+                if img_data:
+                    images.append(ImageData(data=img_data, mime_type=mime))
+            else:
+                file_data = await self._download_file(url)
+                if file_data:
+                    fname = f.get("name", "attachment")
+                    files.append(FileAttachment(data=file_data, filename=fname, mime_type=mime))
 
         # --- @ mention filtering for group/channel messages ---
         channel_type = event.get("channel_type", "")
@@ -132,7 +139,7 @@ class SlackChannel:
                 return
             text = text.replace(mention_tag, "").strip()
 
-        if not text and not images:
+        if not text and not images and not files:
             return
 
         # Dedup by client_msg_id (set by Slack clients).
@@ -152,10 +159,40 @@ class SlackChannel:
             message_id=msg_id,
             raw=req.payload or {},
             images=images,
+            files=files,
         )
 
         if self._callback is not None:
             await self._callback(incoming)
+
+    async def send_file(
+        self,
+        conversation_id: str,
+        file_path: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+    ) -> bool:
+        """Upload and send a file to a Slack channel/DM."""
+        try:
+            kwargs: dict[str, object] = {"channel": conversation_id}
+            if file_path is not None:
+                kwargs["file"] = file_path
+                kwargs["filename"] = filename or file_path.rsplit("/", 1)[-1]
+            elif file_bytes is not None:
+                kwargs["content"] = file_bytes
+                kwargs["filename"] = filename or "file"
+            else:
+                logger.error("send_file called with neither file_path nor file_bytes")
+                return False
+            resp = await self._web_client.files_upload_v2(**kwargs)
+            if not resp.get("ok"):
+                logger.error("Failed to upload Slack file: %s", resp.get("error"))
+                return False
+            return True
+        except Exception:
+            logger.exception("Error uploading file to Slack")
+            return False
 
     async def _download_file(self, url: str) -> bytes | None:
         """Download a file from Slack using bot token for auth."""

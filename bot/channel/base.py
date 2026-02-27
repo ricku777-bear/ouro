@@ -16,6 +16,15 @@ class ImageData:
 
 
 @dataclass
+class FileAttachment:
+    """A non-image file attachment from an IM message."""
+
+    data: bytes
+    filename: str  # e.g. "report.pdf"
+    mime_type: str  # e.g. "application/pdf"
+
+
+@dataclass
 class IncomingMessage:
     """A message received from an IM channel."""
 
@@ -26,6 +35,7 @@ class IncomingMessage:
     message_id: str  # for deduplication
     raw: dict = field(default_factory=dict)
     images: list[ImageData] = field(default_factory=list)
+    files: list[FileAttachment] = field(default_factory=list)
 
 
 @dataclass
@@ -69,4 +79,15 @@ class Channel(Protocol):
         Args:
             message: The outgoing message to send.
         """
+        ...
+
+    async def send_file(
+        self,
+        conversation_id: str,
+        file_path: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+    ) -> bool:
+        """Upload and send a file to the IM channel. Returns True on success."""
         ...

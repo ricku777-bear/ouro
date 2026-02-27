@@ -452,3 +452,104 @@ async def test_stop_closes(channel, mock_socket_client):
 
     mock_socket_client.close.assert_called_once()
     assert channel._callback is None
+
+
+# ---------------------------------------------------------------------------
+# Non-image file attachment tests
+# ---------------------------------------------------------------------------
+
+
+async def test_on_request_non_image_file(channel):
+    """PDF file attachment should populate files list."""
+    received: list[IncomingMessage] = []
+
+    async def cb(msg: IncomingMessage) -> None:
+        received.append(msg)
+
+    channel._callback = cb
+
+    client = AsyncMock()
+    files = [
+        {
+            "mimetype": "application/pdf",
+            "name": "report.pdf",
+            "url_private_download": "https://files.slack.com/report.pdf",
+        }
+    ]
+    req = _make_socket_request(
+        text="check this doc",
+        files=files,
+    )
+
+    with patch.object(channel, "_download_file", new_callable=AsyncMock) as mock_dl:
+        mock_dl.return_value = b"%PDF-1.4 content"
+        await channel._on_request(client, req)
+
+    assert len(received) == 1
+    assert len(received[0].images) == 0
+    assert len(received[0].files) == 1
+    assert received[0].files[0].filename == "report.pdf"
+    assert received[0].files[0].mime_type == "application/pdf"
+    assert received[0].files[0].data == b"%PDF-1.4 content"
+
+
+async def test_on_request_mixed_files(channel):
+    """Image + PDF -> both lists populated."""
+    received: list[IncomingMessage] = []
+
+    async def cb(msg: IncomingMessage) -> None:
+        received.append(msg)
+
+    channel._callback = cb
+
+    client = AsyncMock()
+    files = [
+        {
+            "mimetype": "image/png",
+            "name": "screenshot.png",
+            "url_private_download": "https://files.slack.com/screenshot.png",
+        },
+        {
+            "mimetype": "application/pdf",
+            "name": "document.pdf",
+            "url_private_download": "https://files.slack.com/document.pdf",
+        },
+    ]
+    req = _make_socket_request(
+        text="here are both",
+        files=files,
+        subtype="file_share",
+    )
+
+    with patch.object(channel, "_download_file", new_callable=AsyncMock) as mock_dl:
+        mock_dl.side_effect = [b"\x89PNGimg", b"%PDF-1.4doc"]
+        await channel._on_request(client, req)
+
+    assert len(received) == 1
+    assert len(received[0].images) == 1
+    assert received[0].images[0].mime_type == "image/png"
+    assert len(received[0].files) == 1
+    assert received[0].files[0].filename == "document.pdf"
+
+
+# ---------------------------------------------------------------------------
+# send_file tests
+# ---------------------------------------------------------------------------
+
+
+async def test_send_file_calls_upload_v2(channel):
+    """send_file should call files_upload_v2."""
+    channel._web_client.files_upload_v2 = AsyncMock(return_value={"ok": True})
+
+    result = await channel.send_file(
+        conversation_id="C1",
+        file_bytes=b"hello",
+        filename="test.txt",
+    )
+
+    assert result is True
+    channel._web_client.files_upload_v2.assert_called_once()
+    call_kwargs = channel._web_client.files_upload_v2.call_args[1]
+    assert call_kwargs["channel"] == "C1"
+    assert call_kwargs["content"] == b"hello"
+    assert call_kwargs["filename"] == "test.txt"

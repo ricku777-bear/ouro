@@ -454,13 +454,58 @@ class BotServer:
                     )
                 )
 
+                # Save incoming file attachments to a temp directory so the
+                # agent can read them with file tools.
+                task_text = msg.text
+                tmp_dir: str | None = None
+                if msg.files:
+                    import tempfile
+                    from pathlib import Path
+
+                    tmp_dir = tempfile.mkdtemp(prefix="ouro_files_")
+                    for fa in msg.files:
+                        dest = Path(tmp_dir) / fa.filename
+                        dest.write_bytes(fa.data)
+                        task_text += (
+                            f"\n[Attached file: {fa.filename} ({fa.mime_type})"
+                            f" saved at: {dest}]"
+                        )
+
+                # Wire send_file context if agent has one
+                send_file_ctx = getattr(agent, "_send_file_ctx", None)
+                if send_file_ctx is not None:
+
+                    async def _send_fn(
+                        file_path: str | None = None,
+                        file_bytes: bytes | None = None,
+                        filename: str | None = None,
+                        mime_type: str | None = None,
+                    ) -> bool:
+                        return await channel.send_file(
+                            conversation_id=msg.conversation_id,
+                            file_path=file_path,
+                            file_bytes=file_bytes,
+                            filename=filename,
+                            mime_type=mime_type,
+                        )
+
+                    send_file_ctx.set_send_fn(_send_fn)
+
                 logger.info(
                     "Processing message from %s:%s — %s",
                     msg.channel,
                     msg.conversation_id,
                     msg.text[:80],
                 )
-                result = await agent.run(msg.text, images=msg.images if msg.images else None)
+                try:
+                    result = await agent.run(task_text, images=msg.images if msg.images else None)
+                finally:
+                    if send_file_ctx is not None:
+                        send_file_ctx.clear()
+                    if tmp_dir is not None:
+                        import shutil
+
+                        shutil.rmtree(tmp_dir, ignore_errors=True)
 
                 # Persist session mapping so conversation survives restarts
                 await self._router.update_session_mapping(msg.channel, msg.conversation_id)
@@ -672,6 +717,14 @@ async def run_bot(model_id: str | None = None) -> None:
         from tools.heartbeat_tool import HeartbeatTool
 
         agent.tool_executor.add_tool(HeartbeatTool())
+
+        # Give the agent a send_file tool (context is set per-message in _process_message)
+        from tools.send_file_tool import SendFileContext, SendFileTool
+
+        ctx = SendFileContext()
+        agent.tool_executor.add_tool(SendFileTool(ctx))
+        agent._send_file_ctx = ctx  # type: ignore[attr-defined]  # stash for _process_message
+
         return agent
 
     router = SessionRouter(
