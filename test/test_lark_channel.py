@@ -407,3 +407,130 @@ async def test_stop_clears_state(channel):
     assert channel._callback is None
     assert channel._loop is None
     assert channel._ws_client is None
+
+
+# ---------------------------------------------------------------------------
+# File message tests
+# ---------------------------------------------------------------------------
+
+
+async def test_on_message_file_dispatches(channel):
+    """File message type should dispatch with files populated."""
+    received: list[IncomingMessage] = []
+
+    async def cb(msg: IncomingMessage) -> None:
+        received.append(msg)
+
+    channel._callback = cb
+    channel._loop = asyncio.get_running_loop()
+
+    # Mock file download
+    mock_file = MagicMock()
+    mock_file.read.return_value = b"%PDF-1.4 fake content"
+    mock_response = MagicMock()
+    mock_response.success.return_value = True
+    mock_response.file = mock_file
+    channel._api_client.im.v1.message_resource.get.return_value = mock_response
+
+    data = _make_sdk_event(
+        message_type="file",
+        content=json.dumps({"file_key": "fk_123", "file_name": "report.pdf"}),
+    )
+    channel._on_message(data)
+    await asyncio.sleep(0.05)
+
+    assert len(received) == 1
+    assert len(received[0].files) == 1
+    assert received[0].files[0].filename == "report.pdf"
+    assert received[0].files[0].mime_type == "application/pdf"
+    assert received[0].files[0].data == b"%PDF-1.4 fake content"
+    assert received[0].text == ""
+
+
+async def test_on_message_file_download_failure(channel):
+    """Failed file download should drop the message."""
+    received: list[IncomingMessage] = []
+
+    async def cb(msg: IncomingMessage) -> None:
+        received.append(msg)
+
+    channel._callback = cb
+    channel._loop = asyncio.get_running_loop()
+
+    mock_response = MagicMock()
+    mock_response.success.return_value = False
+    mock_response.code = 99999
+    mock_response.msg = "not found"
+    channel._api_client.im.v1.message_resource.get.return_value = mock_response
+
+    data = _make_sdk_event(
+        message_type="file",
+        content=json.dumps({"file_key": "fk_bad", "file_name": "missing.pdf"}),
+    )
+    channel._on_message(data)
+    await asyncio.sleep(0.05)
+
+    assert len(received) == 0
+
+
+# ---------------------------------------------------------------------------
+# send_file tests
+# ---------------------------------------------------------------------------
+
+
+async def test_send_file_image(channel):
+    """send_file with image MIME delegates to _upload_and_send_image."""
+    channel._upload_and_send_image = MagicMock(return_value=True)
+
+    with patch("bot.channel.lark.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
+            f.write(b"\x89PNG\r\nfakeimage")
+            f.flush()
+            path = f.name
+
+        try:
+            result = await channel.send_file(
+                conversation_id="oc_1",
+                file_path=path,
+                mime_type="image/png",
+            )
+            assert result is True
+            channel._upload_and_send_image.assert_called_once()
+            call_args = channel._upload_and_send_image.call_args[0]
+            assert call_args[0] == "oc_1"  # conversation_id
+        finally:
+            import os
+
+            os.unlink(path)
+
+
+async def test_send_file_document(channel):
+    """send_file with non-image MIME delegates to _upload_and_send_file."""
+    channel._upload_and_send_file = MagicMock(return_value=True)
+
+    with patch("bot.channel.lark.asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
+        mock_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 fake")
+            f.flush()
+            path = f.name
+
+        try:
+            result = await channel.send_file(
+                conversation_id="oc_1",
+                file_path=path,
+                mime_type="application/pdf",
+            )
+            assert result is True
+            channel._upload_and_send_file.assert_called_once()
+        finally:
+            import os
+
+            os.unlink(path)

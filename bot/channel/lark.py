@@ -22,7 +22,7 @@ from lark_oapi.api.im.v1 import (
     P2ImMessageReceiveV1,
 )
 
-from bot.channel.base import ImageData, IncomingMessage, OutgoingMessage
+from bot.channel.base import FileAttachment, ImageData, IncomingMessage, OutgoingMessage
 
 if TYPE_CHECKING:
     from bot.channel.base import MessageCallback
@@ -176,6 +176,7 @@ class LarkChannel:
         # --- Parse by message type ---
         text = ""
         images: list[ImageData] = []
+        files: list[FileAttachment] = []
 
         if msg_obj.message_type == "text":
             # Parse text content (Lark wraps it in JSON: {"text": "hello"}).
@@ -199,6 +200,28 @@ class LarkChannel:
                     return
             else:
                 return
+        elif msg_obj.message_type == "file":
+            try:
+                content = json.loads(msg_obj.content or "{}")
+                file_key = content.get("file_key", "")
+                file_name = content.get("file_name", "attachment")
+            except json.JSONDecodeError:
+                file_key = ""
+                file_name = "attachment"
+            if file_key:
+                file_bytes = self._download_file_resource(msg_obj.message_id or "", file_key)
+                if file_bytes:
+                    import mimetypes
+
+                    mime = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+                    files.append(
+                        FileAttachment(data=file_bytes, filename=file_name, mime_type=mime)
+                    )
+                else:
+                    logger.warning("Failed to download file, dropping message")
+                    return
+            else:
+                return
         else:
             logger.debug("Ignoring message type: %s", msg_obj.message_type)
             return
@@ -213,7 +236,7 @@ class LarkChannel:
                     if key:
                         text = text.replace(key, "").strip()
 
-        if not text.strip() and not images:
+        if not text.strip() and not images and not files:
             return
 
         incoming = IncomingMessage(
@@ -223,6 +246,7 @@ class LarkChannel:
             text=text.strip(),
             message_id=msg_obj.message_id or "",
             images=images,
+            files=files,
         )
 
         # Bridge into the asyncio event loop.
@@ -250,6 +274,25 @@ class LarkChannel:
             logger.exception("Error downloading image from Lark")
             return b""
 
+    def _download_file_resource(self, message_id: str, file_key: str) -> bytes:
+        """Download a non-image file from Lark using message resource API."""
+        try:
+            request = (
+                GetMessageResourceRequest.builder()
+                .message_id(message_id)
+                .file_key(file_key)
+                .type("file")
+                .build()
+            )
+            response = self._api_client.im.v1.message_resource.get(request)
+            if not response.success():
+                logger.error("Failed to download file: code=%s msg=%s", response.code, response.msg)
+                return b""
+            return response.file.read()
+        except Exception:
+            logger.exception("Error downloading file from Lark")
+            return b""
+
     def _send_sync(self, message: OutgoingMessage) -> None:
         """Blocking send via the sync lark client."""
         body = (
@@ -269,3 +312,166 @@ class LarkChannel:
                 response.code,
                 response.msg,
             )
+
+    # ------------------------------------------------------------------
+    # File sending
+    # ------------------------------------------------------------------
+
+    async def send_file(
+        self,
+        conversation_id: str,
+        file_path: str | None = None,
+        file_bytes: bytes | None = None,
+        filename: str | None = None,
+        mime_type: str | None = None,
+    ) -> bool:
+        """Upload and send a file to Lark (async-safe)."""
+        return await asyncio.to_thread(
+            self._send_file_sync, conversation_id, file_path, file_bytes, filename, mime_type
+        )
+
+    def _send_file_sync(
+        self,
+        conversation_id: str,
+        file_path: str | None,
+        file_bytes: bytes | None,
+        filename: str | None,
+        mime_type: str | None,
+    ) -> bool:
+        """Blocking file send — reads bytes, dispatches to image or file upload."""
+
+        if file_path is not None:
+            from pathlib import Path
+
+            p = Path(file_path)
+            data = p.read_bytes()
+            filename = filename or p.name
+        elif file_bytes is not None:
+            data = file_bytes
+            filename = filename or "file"
+        else:
+            logger.error("send_file called with neither file_path nor file_bytes")
+            return False
+
+        if mime_type and mime_type.startswith("image/"):
+            return self._upload_and_send_image(conversation_id, data, filename)
+        return self._upload_and_send_file(conversation_id, data, filename)
+
+    def _upload_and_send_image(self, conversation_id: str, data: bytes, filename: str) -> bool:
+        """Upload image via im.v1.image.create, then send as image message."""
+        import io
+
+        from lark_oapi.api.im.v1 import CreateImageRequest, CreateImageRequestBody
+
+        try:
+            body = (
+                CreateImageRequestBody.builder()
+                .image_type("message")
+                .image(io.BytesIO(data))
+                .build()
+            )
+            req = CreateImageRequest.builder().request_body(body).build()
+            resp = self._api_client.im.v1.image.create(req)
+            if not resp.success() or not resp.data:
+                logger.error(
+                    "Failed to upload image to Lark: code=%s msg=%s",
+                    getattr(resp, "code", "?"),
+                    getattr(resp, "msg", "?"),
+                )
+                return False
+            image_key = resp.data.image_key
+
+            msg_body = (
+                CreateMessageRequestBody.builder()
+                .receive_id(conversation_id)
+                .msg_type("image")
+                .content(json.dumps({"image_key": image_key}))
+                .build()
+            )
+            msg_req = (
+                CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(msg_body)
+                .build()
+            )
+            msg_resp = self._api_client.im.v1.message.create(msg_req)
+            if not msg_resp.success():
+                logger.error(
+                    "Failed to send Lark image message: code=%s msg=%s",
+                    msg_resp.code,
+                    msg_resp.msg,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception("Error uploading/sending image to Lark")
+            return False
+
+    def _upload_and_send_file(self, conversation_id: str, data: bytes, filename: str) -> bool:
+        """Upload file via im.v1.file.create, then send as file message."""
+        import io
+
+        from lark_oapi.api.im.v1 import CreateFileRequest, CreateFileRequestBody
+
+        try:
+            file_type = self._lark_file_type(filename)
+            body = (
+                CreateFileRequestBody.builder()
+                .file_type(file_type)
+                .file_name(filename)
+                .file(io.BytesIO(data))
+                .build()
+            )
+            req = CreateFileRequest.builder().request_body(body).build()
+            resp = self._api_client.im.v1.file.create(req)
+            if not resp.success() or not resp.data:
+                logger.error(
+                    "Failed to upload file to Lark: code=%s msg=%s",
+                    getattr(resp, "code", "?"),
+                    getattr(resp, "msg", "?"),
+                )
+                return False
+            file_key = resp.data.file_key
+
+            msg_body = (
+                CreateMessageRequestBody.builder()
+                .receive_id(conversation_id)
+                .msg_type("file")
+                .content(json.dumps({"file_key": file_key}))
+                .build()
+            )
+            msg_req = (
+                CreateMessageRequest.builder()
+                .receive_id_type("chat_id")
+                .request_body(msg_body)
+                .build()
+            )
+            msg_resp = self._api_client.im.v1.message.create(msg_req)
+            if not msg_resp.success():
+                logger.error(
+                    "Failed to send Lark file message: code=%s msg=%s",
+                    msg_resp.code,
+                    msg_resp.msg,
+                )
+                return False
+            return True
+        except Exception:
+            logger.exception("Error uploading/sending file to Lark")
+            return False
+
+    @staticmethod
+    def _lark_file_type(filename: str) -> str:
+        """Map file extension to Lark's file_type enum value."""
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        mapping = {
+            "opus": "opus",
+            "mp4": "mp4",
+            "pdf": "pdf",
+            "doc": "doc",
+            "docx": "doc",
+            "xls": "xls",
+            "xlsx": "xls",
+            "ppt": "ppt",
+            "pptx": "ppt",
+        }
+        return mapping.get(ext, "stream")
