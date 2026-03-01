@@ -8,26 +8,24 @@ allowed-tools: Bash(npx agent-browser:*), Bash(agent-browser:*)
 
 ## Anti-Detection (Bot Fingerprint Evasion)
 
-When visiting sites with aggressive bot detection (e.g. xiaohongshu.com, ctrip.com, trip.com, taobao.com, jd.com), the default headless Playwright browser **will be blocked**. Follow these steps to avoid detection:
+When visiting sites with aggressive bot detection (e.g. xiaohongshu.com, ctrip.com, trip.com, taobao.com, jd.com), the default headless mode **will be blocked**. Always use `--headed` mode or connect via CDP to avoid detection.
 
-### Preferred: Connect to a Real Chrome Instance (CDP)
+### Use Headed Mode or CDP
 
-The most reliable anti-detection method is connecting to the user's existing Chrome browser via Chrome DevTools Protocol. This ensures the TLS fingerprint, browser features, and JS environment are identical to a real user.
+The default headless Chromium exposes detectable fingerprints (`navigator.webdriver`, headless-specific WebGL/Canvas values, etc.). Switching to headed mode or connecting via CDP avoids these issues.
 
 ```bash
-# Step 1: Launch Chrome with remote debugging (user does this once)
-# macOS:
-/Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+# Option 1: Headed mode (simplest — launches a visible browser window)
+agent-browser --headed open https://xiaohongshu.com
+agent-browser snapshot -i
 
-# Step 2: Connect agent-browser to the running Chrome
+# Option 2: CDP connection (attach to an already-running Chrome)
 agent-browser --cdp 9222 open https://xiaohongshu.com
 agent-browser --cdp 9222 snapshot -i
 
-# Or use auto-connect to discover running Chrome automatically
+# Option 3: Auto-discover a running Chrome with remote debugging
 agent-browser --auto-connect open https://xiaohongshu.com
 ```
-
-**Why CDP works**: Headless Playwright uses a Chromium build whose TLS fingerprint, `navigator.webdriver` flag, and WebGL/Canvas fingerprints differ from real Chrome. CDP connects to the user's actual Chrome, bypassing all these checks.
 
 ### Session Persistence (Avoid Repeated Logins)
 
@@ -35,13 +33,13 @@ Frequent logins trigger risk control systems. Always reuse sessions:
 
 ```bash
 # First run: login and save state
-agent-browser --cdp 9222 --session-name xiaohongshu open https://xiaohongshu.com
+agent-browser --headed --session-name xiaohongshu open https://xiaohongshu.com
 # ... perform login flow ...
 agent-browser state save xhs-auth.json
 
 # Subsequent runs: restore state (no login needed)
-agent-browser --cdp 9222 state load xhs-auth.json
-agent-browser --cdp 9222 open https://xiaohongshu.com/explore
+agent-browser --headed state load xhs-auth.json
+agent-browser --headed open https://xiaohongshu.com/explore
 ```
 
 ### Device Emulation (Consistent Fingerprint)
@@ -49,11 +47,11 @@ agent-browser --cdp 9222 open https://xiaohongshu.com/explore
 Keep device, viewport, and User-Agent consistent across sessions:
 
 ```bash
-# Set a real device profile (viewport + UA + device pixel ratio all match)
-agent-browser --cdp 9222 set device "iPhone 14 Pro"
+# Set a device profile (viewport + UA + device pixel ratio all match)
+agent-browser --headed set device "iPhone 14 Pro"
 
 # Or set viewport manually for desktop
-agent-browser --cdp 9222 set viewport 1920 1080
+agent-browser --headed set viewport 1920 1080
 ```
 
 ### Proxy Configuration
@@ -62,11 +60,11 @@ Use a proxy to avoid IP-based blocking:
 
 ```bash
 # Residential proxy (recommended for anti-detection)
-agent-browser --cdp 9222 --proxy "http://user:pass@residential-proxy.example.com:8080" open https://xiaohongshu.com
+agent-browser --headed --proxy "http://user:pass@residential-proxy.example.com:8080" open https://xiaohongshu.com
 
 # SOCKS5 proxy
 export ALL_PROXY="socks5://user:pass@proxy.example.com:1080"
-agent-browser --cdp 9222 open https://xiaohongshu.com
+agent-browser --headed open https://xiaohongshu.com
 ```
 
 ### Human-Like Behavior
@@ -75,7 +73,7 @@ Add random delays between actions to mimic human interaction:
 
 ```bash
 # Add random delays (1-3 seconds) between actions
-agent-browser --cdp 9222 snapshot -i
+agent-browser --headed snapshot -i
 agent-browser wait 1500
 agent-browser click @e1
 agent-browser wait 2000
@@ -87,7 +85,7 @@ agent-browser snapshot -i
 ### Anti-Detection Checklist
 
 When automating a site with bot detection, verify:
-- [ ] Using `--cdp 9222` or `--auto-connect` (not default headless)
+- [ ] Using `--headed`, `--cdp`, or `--auto-connect` (not default headless)
 - [ ] Session name set with `--session-name` for state persistence
 - [ ] Device/viewport configured consistently
 - [ ] Random delays (`wait <ms>`) between interactions
@@ -96,7 +94,7 @@ When automating a site with bot detection, verify:
 
 ## Core Workflow
 
-> **Important**: For sites with strong anti-bot measures (xiaohongshu.com, ctrip.com, trip.com, taobao.com, jd.com, etc.), you **must** use CDP connection (`--cdp 9222` or `--auto-connect`) to a real Chrome instance. Do not use the default headless mode — it will be detected and blocked. See [Anti-Detection](#anti-detection-bot-fingerprint-evasion) above.
+> **Important**: For sites with strong anti-bot measures (xiaohongshu.com, ctrip.com, trip.com, taobao.com, jd.com, etc.), do **not** use the default headless mode — it will be detected and blocked. Use `--headed`, `--cdp`, or `--auto-connect` instead. See [Anti-Detection](#anti-detection-bot-fingerprint-evasion) above.
 
 Every browser automation follows this pattern:
 
