@@ -19,14 +19,32 @@ agent-browser --headed open https://xiaohongshu.com
 agent-browser snapshot -i
 ```
 
-### Session Persistence (Avoid Repeated Logins)
+### Login via QR Code
 
-Frequent logins trigger risk control systems. Always reuse sessions:
+When a site requires login, prefer QR code scanning over filling in credentials — it avoids CAPTCHAs and SMS verification triggers. Take a screenshot of the QR code and send it to the user so they can scan it with their phone.
 
 ```bash
-# First run: login and save state
+agent-browser --headed open https://xiaohongshu.com/login
+agent-browser snapshot -i
+# Switch to QR code login tab if needed
+agent-browser click @e1
+agent-browser wait 2000
+# Capture the QR code and send to user
+agent-browser screenshot qr-code.png
+# Send qr-code.png to the user, then wait for them to scan
+agent-browser wait --url "**/explore" --timeout 120000
+# Save state after successful login
+agent-browser state save xhs-auth.json
+```
+
+### Session Persistence (Avoid Repeated Logins)
+
+Frequent logins trigger risk control systems. Always reuse saved sessions to skip login entirely:
+
+```bash
+# First run: login (via QR code above) and save state
 agent-browser --headed --session-name xiaohongshu open https://xiaohongshu.com
-# ... perform login flow ...
+# ... login flow ...
 agent-browser state save xhs-auth.json
 
 # Subsequent runs: restore state (no login needed)
