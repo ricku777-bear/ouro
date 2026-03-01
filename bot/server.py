@@ -690,7 +690,7 @@ async def run_bot(model_id: str | None = None) -> None:
 
     # Bootstrap bundled skills into bot's own skills directory
     try:
-        bootstrap_registry = SkillsRegistry(skills_dir=bot_skills_dir)
+        bootstrap_registry = SkillsRegistry(skills_dir=bot_skills_dir, bootstrap=True)
         await bootstrap_registry.load()
     except Exception as e:
         logger.warning("Failed to bootstrap skills registry: %s", e)

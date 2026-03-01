@@ -14,7 +14,7 @@ async def test_bundled_skills_bootstrapped(tmp_path, monkeypatch) -> None:
     # Create empty user skills directory
     (tmp_path / ".ouro" / "skills").mkdir(parents=True)
 
-    registry = SkillsRegistry()
+    registry = SkillsRegistry(bootstrap=True)
     await registry.load()
 
     # Bundled skills should be bootstrapped and loaded
@@ -51,7 +51,7 @@ async def test_user_skill_overrides_system_skill(tmp_path, monkeypatch) -> None:
         ).strip()
     )
 
-    registry = SkillsRegistry()
+    registry = SkillsRegistry(bootstrap=True)
     await registry.load()
 
     # User skill should take precedence

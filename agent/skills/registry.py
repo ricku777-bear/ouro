@@ -23,12 +23,14 @@ BUNDLED_SKILLS_DIR = Path(__file__).parent / "system"
 class SkillsRegistry:
     """Index and resolve skills for ouro."""
 
-    def __init__(self, skills_dir: Path | None = None) -> None:
+    def __init__(self, skills_dir: Path | None = None, *, bootstrap: bool = False) -> None:
         self.skills: dict[str, SkillInfo] = {}
         self._skills_dir = skills_dir or (Path.home() / ".ouro" / "skills")
+        self._bootstrap = bootstrap
 
     async def load(self) -> None:
-        await self._bootstrap_bundled_skills()
+        if self._bootstrap:
+            await self._bootstrap_bundled_skills()
         self.skills = await self._load_skills(self._skills_dir)
 
     async def _bootstrap_bundled_skills(self) -> None:
