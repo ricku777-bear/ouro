@@ -12,7 +12,6 @@ from bot.message_queue import (
     coalesce_messages,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -94,9 +93,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             batches.append(batch)
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.05, idle_timeout=1.0
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.05, idle_timeout=1.0)
         try:
             await q.enqueue(_msg("hello"))
             await asyncio.sleep(0.2)
@@ -111,9 +108,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             batches.append(batch)
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.1, idle_timeout=1.0
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.1, idle_timeout=1.0)
         try:
             await q.enqueue(_msg("one"))
             await asyncio.sleep(0.03)
@@ -157,9 +152,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             batches.append(batch)
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.02, idle_timeout=0.1
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.02, idle_timeout=0.1)
         await q.enqueue(_msg("hi"))
         await asyncio.sleep(0.25)  # debounce + idle timeout
         assert len(batches) == 1
@@ -174,9 +167,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             batches.append(batch)
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.02, idle_timeout=0.1
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.02, idle_timeout=0.1)
         try:
             await q.enqueue(_msg("first"))
             await asyncio.sleep(0.25)  # let consumer stop
@@ -193,9 +184,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             await asyncio.sleep(10)  # would block forever
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.01, idle_timeout=100
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.01, idle_timeout=100)
         await q.enqueue(_msg("hi"))
         await asyncio.sleep(0.05)  # let consumer start
 
@@ -209,9 +198,7 @@ class TestConversationQueue:
         async def callback(batch: list[IncomingMessage]) -> None:
             batches.append(batch)
 
-        q = ConversationQueue(
-            "test:conv1", callback, debounce_seconds=0.05, idle_timeout=1.0
-        )
+        q = ConversationQueue("test:conv1", callback, debounce_seconds=0.05, idle_timeout=1.0)
         try:
             await q.enqueue(_msg("batch1"))
             await asyncio.sleep(0.15)

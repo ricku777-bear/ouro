@@ -74,27 +74,28 @@ class ConversationQueue:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._consumer())
 
+    async def _wait_next(self, timeout: float) -> IncomingMessage | None:
+        """Wait for a message with timeout, returning ``None`` on expiry."""
+        try:
+            return await asyncio.wait_for(self._queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
+
     async def _consumer(self) -> None:
         """Wait for messages, collect with debounce, invoke callback."""
         try:
             while True:
-                try:
-                    first = await asyncio.wait_for(
-                        self._queue.get(), timeout=self._idle_timeout
-                    )
-                except asyncio.TimeoutError:
+                first = await self._wait_next(self._idle_timeout)
+                if first is None:
                     logger.debug("Queue %s idle, consumer stopping", self._key)
                     return
 
                 batch = [first]
                 while len(batch) < self._max_batch:
-                    try:
-                        msg = await asyncio.wait_for(
-                            self._queue.get(), timeout=self._debounce
-                        )
-                        batch.append(msg)
-                    except asyncio.TimeoutError:
+                    msg = await self._wait_next(self._debounce)
+                    if msg is None:
                         break
+                    batch.append(msg)
 
                 try:
                     await self._callback(batch)
