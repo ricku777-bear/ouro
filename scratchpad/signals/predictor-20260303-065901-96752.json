@@ -1,0 +1,151 @@
+{
+  "session_id": "20260303-065901-96752",
+  "free_energy": 0.1767092236174025,
+  "tool_call_count": 124,
+  "error_count": 11,
+  "kb_miss_count": 0,
+  "kb_query_count": 0,
+  "recent_errors": [
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772553815.083394
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772553939.5333729
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772553947.5993862
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772554253.412396
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772554264.3477418
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772555668.528231
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772555715.710162
+    },
+    {
+      "source": "tool_call",
+      "expected": "Glob returns data",
+      "observed": "Glob returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772555784.897603
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772555797.436157
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read succeeds",
+      "observed": "Read failed",
+      "surprise": 0.6,
+      "timestamp": 1772555860.5693882
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772555988.523488
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772555994.86655
+    },
+    {
+      "source": "tool_call",
+      "expected": "Glob returns data",
+      "observed": "Glob returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772556009.3413591
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772556024.085554
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772556045.608336
+    },
+    {
+      "source": "tool_call",
+      "expected": "Grep returns data",
+      "observed": "Grep returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772556047.385747
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772556069.048254
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772556078.692356
+    },
+    {
+      "source": "tool_call",
+      "expected": "Bash succeeds",
+      "observed": "Bash failed",
+      "surprise": 0.6,
+      "timestamp": 1772556110.155881
+    },
+    {
+      "source": "tool_call",
+      "expected": "Read returns data",
+      "observed": "Read returned empty",
+      "surprise": 0.2,
+      "timestamp": 1772556127.007744
+    }
+  ],
+  "updated_at": 1772556325.3938391
+}

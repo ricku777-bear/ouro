@@ -1,0 +1,22 @@
+{
+  "session_id": "20260303-065901-96752",
+  "timestamp": 1772556127.008184,
+  "signals": [
+    {
+      "signal_type": "circuit_breaker",
+      "content": "LOOP: ",
+      "source": "circuit_breaker",
+      "timestamp": 1772556127.008148,
+      "salience": 0.8999997273224176,
+      "metadata": {}
+    },
+    {
+      "signal_type": "circuit_breaker",
+      "content": "LOOP: ",
+      "source": "circuit_breaker",
+      "timestamp": 1772556127.0081458,
+      "salience": 0.8999996827024573,
+      "metadata": {}
+    }
+  ]
+}
